@@ -11,6 +11,11 @@ import time
 import random
 from datetime import datetime, timedelta
 import re
+import threading
+import functools
+from typing import List, Dict, Any, Optional, Union, Callable, TypeVar
+
+T = TypeVar('T')  # For generic functions
 
 def generate_unique_id():
     """Generate a unique ID for transactions or records"""
@@ -614,3 +619,242 @@ def get_trading_sessions():
             'end': post_market_end
         }
     }
+
+# New functions to support Data Orchestrator
+
+def run_in_thread(func):
+    """
+    Decorator to run a function in a separate thread
+    
+    Args:
+        func: Function to run in thread
+        
+    Returns:
+        threading.Thread: The thread object
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        thread = threading.Thread(target=func, args=args, kwargs=kwargs)
+        thread.daemon = True
+        thread.start()
+        return thread
+    return wrapper
+
+def chunk_list(items, chunk_size):
+    """
+    Split a list into chunks of specified size
+    
+    Args:
+        items (list): List to split
+        chunk_size (int): Size of each chunk
+        
+    Returns:
+        list: List of chunks
+    """
+    if not items:
+        return []
+    
+    return [items[i:i+chunk_size] for i in range(0, len(items), chunk_size)]
+
+def rate_limit(max_calls=10, time_period=1):
+    """
+    Decorator to rate limit function calls
+    
+    Args:
+        max_calls (int): Maximum number of calls in time period
+        time_period (float): Time period in seconds
+        
+    Returns:
+        Decorated function
+    """
+    calls = []
+    lock = threading.Lock()
+    
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            with lock:
+                # Remove old calls
+                now = time.time()
+                while calls and calls[0] < now - time_period:
+                    calls.pop(0)
+                
+                # Check if we've hit the limit
+                if len(calls) >= max_calls:
+                    # We need to wait
+                    sleep_time = calls[0] + time_period - now
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+                
+                # Add this call
+                calls.append(time.time())
+            
+            # Call the function
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+def merge_dictionaries(*dicts, mode='update'):
+    """
+    Merge multiple dictionaries with different merging modes
+    
+    Args:
+        *dicts: Dictionaries to merge
+        mode (str): Merge mode ('update', 'override', 'keep_first')
+        
+    Returns:
+        dict: Merged dictionary
+    """
+    result = {}
+    
+    if mode == 'update':
+        # Update keys, recursively for nested dicts
+        for d in dicts:
+            for key, value in d.items():
+                if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                    result[key] = merge_dictionaries(result[key], value, mode=mode)
+                else:
+                    result[key] = value
+    
+    elif mode == 'override':
+       # Later dictionaries override earlier ones
+       for d in dicts:
+           result.update(d)
+   
+    elif mode == 'keep_first':
+        # First dictionary keys take precedence
+        for d in dicts:
+            for key, value in d.items():
+                if key not in result:
+                    result[key] = value
+    
+    return result
+
+def safe_get(obj, *keys, default=None):
+    """
+    Safely get a value from a nested dictionary/object
+
+    Args:
+        obj: Object or dictionary to extract from
+        *keys: Keys or attributes to navigate
+        default: Default value if not found
+        
+    Returns:
+        Value or default
+    """
+    current = obj
+
+    for key in keys:
+        if current is None:
+            return default
+            
+        if isinstance(current, dict):
+            current = current.get(key)
+        else:
+            try:
+                current = getattr(current, key)
+            except (AttributeError, TypeError):
+                return default
+
+    return current if current is not None else default
+
+def execute_with_timeout(func, args=(), kwargs={}, timeout=60):
+    """
+    Execute a function with a timeout
+
+    Args:
+        func: Function to execute
+        args: Function arguments
+        kwargs: Function keyword arguments
+        timeout: Timeout in seconds
+        
+    Returns:
+        Function result or None if timeout
+    """
+    result_container = []
+    exception_container = []
+
+    def worker():
+        try:
+            result = func(*args, **kwargs)
+            result_container.append(result)
+        except Exception as e:
+            exception_container.append(e)
+
+        thread = threading.Thread(target=worker)
+        thread.daemon = True
+        thread.start()
+        thread.join(timeout)
+
+        if thread.is_alive():
+            # Timeout occurred
+            return None
+
+        if exception_container:
+            # Re-raise the exception
+            raise exception_container[0]
+
+        if result_container:
+            return result_container[0]
+
+        return None
+
+def synchronize(lock_name=None):
+    """
+    Decorator to synchronize a function with a lock
+
+    Args:
+        lock_name: Name of the lock to use (uses function name if None)
+        
+    Returns:
+        Decorated function
+    """
+    # Dictionary to store locks
+    locks = {}
+
+    def decorator(func):
+        # Use function name as lock name if not provided
+        nonlocal lock_name
+        if lock_name is None:
+            lock_name = func.__name__
+        
+        # Create lock if it doesn't exist
+        if lock_name not in locks:
+            locks[lock_name] = threading.Lock()
+        
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            with locks[lock_name]:
+                return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+def convert_timeframe_to_minutes(timeframe):
+    """
+    Convert various timeframe formats to minutes
+
+    Args:
+        timeframe (str): Timeframe string ('1min', '1h', 'day', etc.)
+        
+    Returns:
+        int: Minutes or None if not convertible
+    """
+    # Map common timeframe strings
+    timeframe_map = {
+        "1min": 1,
+        "5min": 5,
+        "15min": 15,
+        "30min": 30,
+        "60min": 60,
+        "1h": 60,
+        "4h": 240,
+        "day": 1440,   # 24 * 60
+        "week": 10080  # 7 * 24 * 60
+    }
+
+    # Check direct mapping
+    if timeframe in timeframe_map:
+        return timeframe_map[timeframe]
+
+    # Try to parse with regex
+    return parse_timeframe(timeframe)

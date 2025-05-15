@@ -8,6 +8,8 @@ import logging
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 import sys
+import functools
+import time
 
 from config import settings
 
@@ -86,6 +88,7 @@ def log_execution_time(logger):
         decorator: Execution time logging decorator
     """
     def decorator(func):
+        @functools.wraps(func)
         def wrapper(*args, **kwargs):
             start_time = datetime.now()
             logger.debug(f"Starting {func.__name__}")
@@ -145,3 +148,81 @@ def log_trade(trade_info):
             trade_msg += f" | {key}: {trade_info[key]}"
     
     trade_logger.info(trade_msg)
+
+def setup_subprocess_logger(name):
+    """
+    Set up a logger for subprocess output
+    
+    Args:
+        name (str): Name of the subprocess
+        
+    Returns:
+        logger: Configured logger
+    """
+    logger = setup_logger(f"subprocess.{name}")
+    return logger
+
+def log_data_collection(logger, data_type, symbol, exchange, status, count=None, duration=None):
+    """
+    Log a data collection event with standardized format
+    
+    Args:
+        logger: Logger to use
+        data_type (str): Type of data being collected
+        symbol (str): Instrument symbol
+        exchange (str): Exchange code
+        status (str): Collection status ('started', 'completed', 'failed')
+        count (int, optional): Number of items collected
+        duration (float, optional): Duration of collection in seconds
+    """
+    msg = f"Data collection {status} - {data_type} for {symbol}:{exchange}"
+    
+    if count is not None:
+        msg += f" | Items: {count}"
+    
+    if duration is not None:
+        msg += f" | Duration: {duration:.2f}s"
+    
+    if status == 'started':
+        logger.info(msg)
+    elif status == 'completed':
+        logger.info(msg)
+    elif status == 'failed':
+        logger.error(msg)
+    else:
+        logger.info(msg)
+
+def log_performance(operation_name, start_time=None):
+    """
+    Context manager to log performance of a block of code
+    
+    Args:
+        operation_name (str): Name of the operation to log
+        start_time (datetime, optional): Start time if already recorded
+        
+    Example:
+        with log_performance('data_processing'):
+            process_data()
+    """
+    class PerformanceLogger:
+        def __init__(self, operation_name, start_time):
+            self.operation_name = operation_name
+            self.start_time = start_time
+            self.logger = setup_logger("performance")
+        
+        def __enter__(self):
+            if self.start_time is None:
+                self.start_time = datetime.now()
+            self.logger.debug(f"Starting {self.operation_name}")
+            return self
+        
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            end_time = datetime.now()
+            duration = (end_time - self.start_time).total_seconds()
+            
+            if exc_type is None:
+                self.logger.debug(f"Completed {self.operation_name} in {duration:.2f} seconds")
+            else:
+                self.logger.error(f"Failed {self.operation_name} after {duration:.2f} seconds: {exc_val}")
+    
+    return PerformanceLogger(operation_name, start_time)

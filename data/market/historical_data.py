@@ -26,7 +26,7 @@ class HistoricalDataCollector:
         self.db = db_connector
         self.logger = logging.getLogger(__name__)
         self.zerodha = ZerodhaConnector()
-    
+        self.partitioner = db_connector.get_partitioner()
     def collect_data(self, symbol, exchange, timeframe="day", days=365, end_date=None, max_retries=3):
         """
         Collect historical data for an instrument
@@ -164,6 +164,25 @@ class HistoricalDataCollector:
         
         return total_records > 0
     
+    def save_market_data(self, symbol, timeframe, data):
+        """Save market data using time-based partitioning."""
+        for record in data:
+            # Get the appropriate partition for this timestamp
+            timestamp = record.get("timestamp")
+            if not timestamp:
+                continue
+                
+            partition_name = self.partitioner.get_partition_for_date(
+                "market_data_collection", 
+                timestamp
+            )
+            
+            # Insert into the correct partition
+            try:
+                self.db[partition_name].insert_one(record)
+            except Exception as e:
+                self.logger.error(f"Error saving data to {partition_name}: {e}")
+                
     def _process_and_store_data(self, symbol, exchange, timeframe, data):
         """
         Process and store historical data

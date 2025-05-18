@@ -17,7 +17,7 @@ from config import settings
 from database.connection_manager import get_db
 from utils.logging_utils import setup_logger, log_error, log_execution_time
 from utils.helper_functions import retry_function, get_date_range
-
+ 
 
 class DataOrchestrator:
     """
@@ -35,6 +35,12 @@ class DataOrchestrator:
         self.logger = setup_logger(__name__)
         self.db = db or get_db()
         
+        self.db_optimizer = db.get_optimizer()
+        self.time_partitioner = db.get_partitioner()
+        
+        # Set up partitioning for key collections
+        self._setup_partitioning()
+
         # Track ongoing collection tasks
         self.active_collections = {}
         self.collection_locks = {}
@@ -128,6 +134,34 @@ class DataOrchestrator:
         self.logger.info(f"Completed data collection for {symbol}:{exchange}")
         return results
     
+    def _setup_partitioning(self):
+        """Set up time-based partitioning for important collections."""
+        collections = ["market_data_collection", "trades_collection", "news_collection"]
+        for collection in collections:
+            self.time_partitioner.setup_partitioning(collection)
+    
+    def schedule_optimization_tasks(self):
+        """Schedule regular database optimization tasks."""
+        # This would be called during system initialization
+        # And would integrate with your task scheduler
+        
+        # Run optimization daily at midnight
+        from automation.scheduler import Scheduler
+        scheduler = Scheduler()
+        scheduler.schedule_daily(
+            name="database_optimization",
+            time="00:00",
+            task=self.db_optimizer.optimize_database
+        )
+        
+        # Run partition cleanup weekly
+        scheduler.schedule_weekly(
+            name="partition_cleanup",
+            day=0,  # Sunday
+            time="01:00",
+            task=self.time_partitioner.cleanup_partitions
+        )
+
     def collect_market_data(self, symbol: str, exchange: str, timeframes: List[str] = None,
                            days: int = None) -> bool:
         """

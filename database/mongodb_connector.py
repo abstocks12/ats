@@ -8,6 +8,9 @@ import sys
 import time
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Union
+from database.database_optimizer import DatabaseOptimizer
+from database.query_optimizer import QueryOptimizer
+from database.time_series_partitioner import TimeSeriesPartitioner
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -53,6 +56,23 @@ class MongoDBConnector:
         # Try to connect to MongoDB
         self._connect()
     
+    def get_optimizer(self):
+        """Get a database optimizer instance."""
+        return DatabaseOptimizer(self)
+    
+    def get_query_optimizer(self):
+        """Get a query optimizer instance."""
+        return QueryOptimizer(self)
+    
+    def get_partitioner(self):
+        """Get a time series partitioner instance."""
+        return TimeSeriesPartitioner(self)
+    
+    def optimize_database(self):
+        """Run database optimization."""
+        optimizer = self.get_optimizer()
+        return optimizer.optimize_database()
+
     def _connect(self):
         """Connect to MongoDB database"""
         try:

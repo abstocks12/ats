@@ -3,11 +3,14 @@ Main entry point for the Automated Trading System.
 Initializes the system and provides a command-line interface.
 """
 
+import logging
 import os
 import sys
 import argparse
 import signal
 from datetime import datetime
+
+from database.mongodb_connector import MongoDBConnector
 
 # Add parent directory to path to allow imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -268,6 +271,25 @@ def print_banner():
     print(f"  Mode: {version_info['trading_mode']}  |  Environment: {version_info['environment']}")
     print(f"  Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60 + "\n")
+
+# In main.py or app initialization
+def initialize_database():
+    db_connector = MongoDBConnector()
+    
+    # Run initial optimization
+    optimizer = db_connector.get_optimizer()
+    optimization_result = optimizer.optimize_database()
+    
+    # Set up partitioning
+    partitioner = db_connector.get_partitioner()
+    collections = ["market_data_collection", "trades_collection", "news_collection"]
+    for collection in collections:
+        partitioner.setup_partitioning(collection)
+    
+    # Log results
+    logging.info(f"Database optimization completed: {optimization_result['status']}")
+    
+    return db_connector
 
 def main():
     """Main function"""

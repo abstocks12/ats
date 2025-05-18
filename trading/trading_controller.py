@@ -22,6 +22,36 @@ class PositionManager:
         """
         self.db = db_connector
         self.logger = logging.getLogger(__name__)
+        self.query_optimizer = db_connector.get_query_optimizer()
+    
+    def _get_latest_predictions(self, instruments):
+        """Get latest predictions using optimized queries."""
+        predictions = []
+        
+        for instrument in instruments:
+            try:
+                # Use optimized query instead of direct database access
+                symbol = instrument["symbol"]
+                
+                result = self.query_optimizer.get_prediction_accuracy(
+                    days=1,  # Just today's predictions
+                    by_symbol=True
+                )
+                
+                if result["status"] == "success":
+                    # Extract this symbol's prediction
+                    symbol_predictions = [
+                        p for p in result["accuracy_stats"] 
+                        if p.get("symbol") == symbol
+                    ]
+                    
+                    if symbol_predictions:
+                        predictions.extend(symbol_predictions)
+                
+            except Exception as e:
+                self.logger.error(f"Error getting prediction for {instrument['symbol']}: {e}")
+        
+        return predictions
     
     def get_position(self, symbol, exchange):
         """

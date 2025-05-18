@@ -824,6 +824,61 @@ class FinancialScraper:
         except Exception as e:
             log_error(e, context={"action": "extract_tijori_company_info", "symbol": self.symbol})
     
+    def _extract_zerodha_market_depth(self, soup: BeautifulSoup) -> None:
+        """
+        Extract market depth information from Zerodha Markets
+        
+        Args:
+            soup (BeautifulSoup): Parsed HTML
+        """
+        try:
+            # Find market depth section
+            depth_section = soup.select_one('#market-depth')
+            
+            if not depth_section:
+                return
+            
+            # Extract buy side
+            buy_side = {}
+            buy_table = depth_section.select_one('.buy-side')
+            
+            if buy_table:
+                buy_rows = buy_table.select('tr')
+                
+                for i, row in enumerate(buy_rows):
+                    cells = row.select('td')
+                    if len(cells) >= 2:
+                        price = self._parse_numeric_value(cells[0].text.strip())
+                        quantity = self._parse_numeric_value(cells[1].text.strip())
+                        buy_side[f'level_{i+1}'] = {'price': price, 'quantity': quantity}
+            
+            # Extract sell side
+            sell_side = {}
+            sell_table = depth_section.select_one('.sell-side')
+            
+            if sell_table:
+                sell_rows = sell_table.select('tr')
+                
+                for i, row in enumerate(sell_rows):
+                    cells = row.select('td')
+                    if len(cells) >= 2:
+                        price = self._parse_numeric_value(cells[0].text.strip())
+                        quantity = self._parse_numeric_value(cells[1].text.strip())
+                        sell_side[f'level_{i+1}'] = {'price': price, 'quantity': quantity}
+            
+            # Add to financial data
+            self.financial_data['market_depth'] = {
+                'buy_side': buy_side,
+                'sell_side': sell_side,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            log_error(e, context={"action": "extract_zerodha_market_depth", "symbol": self.symbol})
+    
+    
+    # Extract methods for Tijori Finance data
+    
     def _extract_tijori_key_metrics(self, soup: BeautifulSoup) -> None:
         """
         Extract key metrics from Tijori Finance
@@ -833,7 +888,7 @@ class FinancialScraper:
         """
         try:
             # Find key metrics section
-            metrics_section = soup.select_one('.key-metrics, .company-metrics')
+            metrics_section = soup.select_one('.key-metrics')
             
             if not metrics_section:
                 return
@@ -844,8 +899,8 @@ class FinancialScraper:
             for metric in metrics:
                 try:
                     # Extract name and value
-                    name_elem = metric.select_one('.metric-name, .label')
-                    value_elem = metric.select_one('.metric-value, .value')
+                    name_elem = metric.select_one('.metric-name')
+                    value_elem = metric.select_one('.metric-value')
                     
                     if not name_elem or not value_elem:
                         continue
@@ -860,18 +915,18 @@ class FinancialScraper:
                     if self.debug_mode:
                         self.logger.debug(f"Error parsing metric: {e}")
                     continue
-                    
-            # Extract financial ratios
-            ratios_section = soup.select_one('.financial-ratios')
             
-            if ratios_section:
-                ratios = ratios_section.select('.ratio-item')
+            # Extract valuation metrics
+            valuation_section = soup.select_one('.valuation-metrics')
+            
+            if valuation_section:
+                metrics = valuation_section.select('.metric-item')
                 
-                for ratio in ratios:
+                for metric in metrics:
                     try:
                         # Extract name and value
-                        name_elem = ratio.select_one('.ratio-name, .label')
-                        value_elem = ratio.select_one('.ratio-value, .value')
+                        name_elem = metric.select_one('.metric-name')
+                        value_elem = metric.select_one('.metric-value')
                         
                         if not name_elem or not value_elem:
                             continue
@@ -879,9 +934,386 @@ class FinancialScraper:
                         name = name_elem.text.strip().lower().replace(' ', '_')
                         value = self._parse_numeric_value(value_elem.text.strip())
                         
-                        # Add to financial ratios
-                        self.financial_data['financial_ratios'][name] = value
+                        # Add to key metrics
+                        self.financial_data['key_metrics'][name] = value
                         
                     except Exception as e:
                         if self.debug_mode:
-                            self.logger.debug(f"Error parsing ratio:
+                            self.logger.debug(f"Error parsing valuation metric: {e}")
+                        continue
+            
+        except Exception as e:
+            log_error(e, context={"action": "extract_tijori_key_metrics", "symbol": self.symbol})
+    
+    def _extract_tijori_financial_data(self, soup: BeautifulSoup) -> None:
+        """
+        Extract financial data from Tijori Finance
+        
+        Args:
+            soup (BeautifulSoup): Parsed HTML
+        """
+        try:
+            # Find financials section
+            financials_section = soup.select_one('#financials')
+            
+            if not financials_section:
+                return
+            
+            # Extract quarterly results
+            quarterly_section = financials_section.select_one('.quarterly-financials')
+            
+            if quarterly_section:
+                tables = quarterly_section.select('table')
+                
+                for table in tables:
+                    self._process_tijori_table(table, 'quarterly_results')
+            
+            # Extract annual results
+            annual_section = financials_section.select_one('.annual-financials')
+            
+            if annual_section:
+                tables = annual_section.select('table')
+                
+                for table in tables:
+                    self._process_tijori_table(table, 'annual_results')
+            
+            # Extract cash flow statement
+            cash_flow_section = financials_section.select_one('.cash-flow')
+            
+            if cash_flow_section:
+                tables = cash_flow_section.select('table')
+                
+                for table in tables:
+                    self._process_tijori_table(table, 'cash_flow_statement')
+            
+            # Extract balance sheet
+            balance_sheet_section = financials_section.select_one('.balance-sheet')
+            
+            if balance_sheet_section:
+                tables = balance_sheet_section.select('table')
+                
+                for table in tables:
+                    self._process_tijori_table(table, 'balance_sheet')
+            
+        except Exception as e:
+            log_error(e, context={"action": "extract_tijori_financial_data", "symbol": self.symbol})
+    
+    def _extract_tijori_peer_comparison(self, soup: BeautifulSoup) -> None:
+        """
+        Extract peer comparison data from Tijori Finance
+        
+        Args:
+            soup (BeautifulSoup): Parsed HTML
+        """
+        try:
+            # Find peer comparison section
+            peer_section = soup.select_one('#peer-comparison')
+            
+            if not peer_section:
+                return
+            
+            # Extract table
+            table = peer_section.select_one('table')
+            
+            if not table:
+                return
+            
+            # Extract headers
+            headers = [th.text.strip() for th in table.select('thead th')]
+            
+            # Handle empty headers
+            if len(headers) <= 1:
+                return
+            
+            # Extract rows
+            rows = table.select('tbody tr')
+            
+            # Initialize peer comparison data
+            peer_comparison = []
+            
+            # Extract data for each row (company)
+            for row in rows:
+                cells = row.select('td')
+                if len(cells) < len(headers):
+                    continue
+                
+                company_data = {}
+                
+                # Extract company name
+                company_data['company'] = cells[0].text.strip()
+                
+                # Extract metrics
+                for i, header in enumerate(headers[1:], 1):
+                    metric_name = header.lower().replace(' ', '_')
+                    value = self._parse_numeric_value(cells[i].text.strip())
+                    company_data[metric_name] = value
+                
+                # Add to peer comparison
+                peer_comparison.append(company_data)
+            
+            # Add to financial data
+            self.financial_data['peer_comparison'] = peer_comparison
+            
+        except Exception as e:
+            log_error(e, context={"action": "extract_tijori_peer_comparison", "symbol": self.symbol})
+    
+    def _extract_tijori_sector_metrics(self, soup: BeautifulSoup) -> None:
+        """
+        Extract sector metrics from Tijori Finance
+        
+        Args:
+            soup (BeautifulSoup): Parsed HTML
+        """
+        try:
+            # Find sector metrics section
+            sector_section = soup.select_one('#sector-metrics')
+            
+            if not sector_section:
+                return
+            
+            # Extract sector metrics
+            metrics = sector_section.select('.sector-metric')
+            
+            sector_metrics = {}
+            
+            for metric in metrics:
+                try:
+                    # Extract name and values
+                    name_elem = metric.select_one('.metric-name')
+                    company_value_elem = metric.select_one('.company-value')
+                    sector_value_elem = metric.select_one('.sector-value')
+                    
+                    if not name_elem or not company_value_elem or not sector_value_elem:
+                        continue
+                    
+                    name = name_elem.text.strip().lower().replace(' ', '_')
+                    company_value = self._parse_numeric_value(company_value_elem.text.strip())
+                    sector_value = self._parse_numeric_value(sector_value_elem.text.strip())
+                    
+                    # Add to sector metrics
+                    sector_metrics[name] = {
+                        'company': company_value,
+                        'sector_average': sector_value
+                    }
+                    
+                except Exception as e:
+                    if self.debug_mode:
+                        self.logger.debug(f"Error parsing sector metric: {e}")
+                    continue
+            
+            # Add to financial data
+            self.financial_data['sector_comparison'] = sector_metrics
+            
+        except Exception as e:
+            log_error(e, context={"action": "extract_tijori_sector_metrics", "symbol": self.symbol})
+    
+    def _process_tijori_table(self, table: BeautifulSoup, result_type: str) -> None:
+        """
+        Process financial table from Tijori Finance
+        
+        Args:
+            table (BeautifulSoup): Table element
+            result_type (str): Type of results ('quarterly_results', 'annual_results', etc.)
+        """
+        try:
+            # Extract headers
+            headers = [th.text.strip() for th in table.select('thead th')]
+            
+            # Handle empty headers
+            if not headers:
+                return
+            
+            # Extract rows
+            rows = table.select('tbody tr')
+            
+            # Process periods from columns
+            periods = headers[1:]  # First column is metric name
+            
+            # Check if we need to initialize or update existing results
+            results = self.financial_data.get(result_type, [])
+            
+            # Initialize results for each period if empty
+            if not results:
+                for period in periods:
+                    results.append({
+                        'period': period
+                    })
+            
+            # Extract data for each row
+            for row in rows:
+                cells = row.select('td')
+                if len(cells) <= 1:
+                    continue
+                
+                metric_name = cells[0].text.strip().lower().replace(' ', '_')
+                
+                # Process values for each period
+                for i, cell in enumerate(cells[1:]):
+                    if i >= len(results):
+                        break
+                    
+                    value = self._parse_numeric_value(cell.text.strip())
+                    results[i][metric_name] = value
+            
+            # Update financial data
+            self.financial_data[result_type] = results
+            
+        except Exception as e:
+            log_error(e, context={"action": "process_tijori_table", "symbol": self.symbol})
+    
+    def _parse_numeric_value(self, value_str: str) -> Union[float, int, str]:
+        """
+        Parse numeric value from string
+        
+        Args:
+            value_str (str): String value
+            
+        Returns:
+            Union[float, int, str]: Parsed value
+        """
+        try:
+            # Remove commas, percentages, and other non-numeric characters
+            clean_value = re.sub(r'[₹,]', '', value_str)
+            
+            # Handle percentages
+            if '%' in clean_value:
+                return float(clean_value.replace('%', '')) / 100.0
+            
+            # Handle crores and lakhs (Indian number format)
+            if 'cr' in clean_value.lower():
+                return float(clean_value.lower().replace('cr', '')) * 10000000
+            
+            if 'lakh' in clean_value.lower() or 'lac' in clean_value.lower():
+                return float(re.sub(r'lakh|lac', '', clean_value.lower())) * 100000
+            
+            # Try to convert to int or float
+            try:
+                value = int(clean_value)
+            except ValueError:
+                value = float(clean_value)
+            
+            return value
+            
+        except Exception:
+            # Return original string if parsing fails
+            return value_str
+    
+    def _save_to_database(self) -> None:
+        """Save the collected financial data to database using the FinancialData model"""
+        try:
+            # Import the FinancialData model
+            from financial_data import FinancialData
+            
+            # Convert the scraper data to FinancialData objects
+            financial_data_objects = FinancialData.from_financial_scraper(
+                symbol=self.symbol,
+                exchange=self.exchange,
+                scraper_data=self.financial_data
+            )
+            
+            # Save to database
+            cursor = self.db.cursor()
+            
+            for financial_data_obj in financial_data_objects:
+                # Convert to dictionary
+                data_dict = financial_data_obj.to_dict()
+                
+                # Convert datetime objects to strings
+                report_date_str = data_dict['report_date'].strftime('%Y-%m-%d %H:%M:%S')
+                scraped_at_str = data_dict['scraped_at'].strftime('%Y-%m-%d %H:%M:%S')
+                created_at_str = data_dict['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+                updated_at_str = data_dict['updated_at'].strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Convert data to JSON
+                data_json = json.dumps(data_dict['data'])
+                
+                # Check if record exists
+                cursor.execute(
+                    """SELECT id FROM financial_data 
+                       WHERE symbol = ? AND exchange = ? AND report_type = ? AND period = ?""",
+                    (self.symbol, self.exchange, data_dict['report_type'], data_dict['period'])
+                )
+                
+                existing_id = cursor.fetchone()
+                
+                if existing_id:
+                    # Update existing record
+                    cursor.execute(
+                        """UPDATE financial_data 
+                           SET data = ?, report_date = ?, scraped_at = ?, updated_at = datetime('now')
+                           WHERE id = ?""",
+                        (data_json, report_date_str, scraped_at_str, existing_id[0])
+                    )
+                    self.logger.info(
+                        f"Updated {data_dict['report_type']} financial data for {self.symbol}:{self.exchange} - {data_dict['period']}"
+                    )
+                else:
+                    # Insert new record
+                    cursor.execute(
+                        """INSERT INTO financial_data 
+                           (symbol, exchange, report_type, period, report_date, data, 
+                            scraped_at, created_at, updated_at) 
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            self.symbol, self.exchange, data_dict['report_type'], data_dict['period'], 
+                            report_date_str, data_json, scraped_at_str, created_at_str, updated_at_str
+                        )
+                    )
+                    self.logger.info(
+                        f"Inserted new {data_dict['report_type']} financial data for {self.symbol}:{self.exchange} - {data_dict['period']}"
+                    )
+            
+            # Create a unique filename based on symbol and date for the full data
+            filename = sanitize_filename(f"{self.symbol}_{self.exchange}_financial_data_{datetime.now().strftime('%Y%m%d')}.json")
+            
+            # Also save the complete raw data for archival purposes
+            full_data_json = json.dumps(self.financial_data)
+            cursor.execute(
+                """INSERT INTO financial_data_raw 
+                   (symbol, exchange, data, timestamp, filename) 
+                   VALUES (?, ?, ?, datetime('now'), ?)""",
+                (self.symbol, self.exchange, full_data_json, filename)
+            )
+            
+            # Commit changes
+            self.db.commit()
+            
+            # Log data collection
+            log_data_collection(
+                data_type="financial_data",
+                symbol=self.symbol,
+                exchange=self.exchange,
+                source="enhanced_financial_scraper"
+            )
+            
+        except Exception as e:
+            log_error(e, context={"action": "save_to_database", "symbol": self.symbol})
+            # Rollback in case of error
+            self.db.rollback()
+
+# Example usage
+if __name__ == "__main__":
+    # Example usage
+    scraper = FinancialScraper(
+        symbol="RELIANCE",
+        exchange="NSE",
+        debug_mode=True
+    )
+    
+    financial_data = scraper.run()
+    
+    if financial_data:
+        print(f"Successfully collected financial data for RELIANCE:NSE")
+        
+        # Print some key metrics
+        print("\nKey Metrics:")
+        for metric, value in financial_data['key_metrics'].items():
+            print(f"{metric}: {value}")
+        
+        # Print latest quarterly results
+        if financial_data['quarterly_results']:
+            latest_quarter = financial_data['quarterly_results'][0]
+            print(f"\nLatest Quarter ({latest_quarter.get('quarter', 'Unknown')}):")
+            for metric, value in latest_quarter.items():
+                if metric != 'quarter':
+                    print(f"{metric}: {value}")

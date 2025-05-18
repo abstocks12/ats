@@ -1,0 +1,23 @@
+2025-05-19 00:04:27,308 - database.mongodb_connector - INFO - Connected to MongoDB database: automated_trading
+2025-05-19 00:04:27,310 - __main__ - INFO - Collecting data for TATASTEEL:NSE
+2025-05-19 00:04:27,310 - __main__ - INFO - Starting data collection for TATASTEEL:NSE
+2025-05-19 00:04:27,310 - __main__ - INFO - Collecting financial data for TATASTEEL:NSE
+2025-05-19 00:04:27,310 - portfolio.data_pipeline_trigger - INFO - Collecting financial data for TATASTEEL:NSE
+2025-05-19 00:04:27,404 - data.financial.financial_scraper - INFO - Starting financial data collection for TATASTEEL:NSE
+2025-05-19 00:04:27,404 - data.financial.financial_scraper - INFO - Scraping Screener.in data for TATASTEEL
+2025-05-19 00:04:29,864 - data.financial.financial_scraper - INFO - Successfully scraped Screener.in data for TATASTEEL
+2025-05-19 00:04:29,864 - data.financial.financial_scraper - INFO - Scraping Zerodha Markets data for TATASTEEL
+2025-05-19 00:04:32,135 - data.financial.financial_scraper - INFO - Successfully scraped Zerodha Markets data for TATASTEEL
+2025-05-19 00:04:32,135 - data.financial.financial_scraper - INFO - Scraping Tijori Finance data for TATASTEEL
+2025-05-19 00:04:35,735 - data.financial.financial_scraper - INFO - Successfully scraped Tijori Finance data for TATASTEEL
+2025-05-19 00:04:35,758 - system - ERROR - ERROR: AttributeError: 'MongoDBConnector' object has no attribute 'cursor' | Context: {'action': 'save_to_database', 'symbol': 'TATASTEEL'}
+Traceback (most recent call last):
+  File "/Users/ashokbathu/Documents/automated_trading_system/data/financial/financial_scraper.py", line 1214, in _save_to_database
+    cursor = self.db.cursor()
+             ^^^^^^^^^^^^^^
+AttributeError: 'MongoDBConnector' object has no attribute 'cursor'
+2025-05-19 00:04:35,759 - database.mongodb_connector - WARNING - Rollback called, but MongoDB standalone doesn't support transactions
+2025-05-19 00:04:35,761 - portfolio.portfolio_manager - INFO - Updated financial data collection status for TATASTEEL:NSE to True
+2025-05-19 00:04:35,762 - portfolio.data_pipeline_trigger - INFO - Completed financial data collection for TATASTEEL:NSE
+2025-05-19 00:04:35,955 - database.mongodb_connector - ERROR - Error closing MongoDB connection: sys.meta_path is None, Python is likely shutting down
+2025-05-19 00:04:35,955 - database.mongodb_connector - INFO - MongoDB connection closed

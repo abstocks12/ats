@@ -116,19 +116,36 @@ class MongoDBConnector:
     def _setup_collections(self):
         """Setup instance variables for collections"""
         # Map collection names to instance variables
+        # Map collection names to instance variables
         for name, collection in settings.MONGODB_COLLECTIONS.items():
             setattr(self, f"{name}_collection", self.db[collection])
+        
+        # Add tasks collection if not already included
+        if not hasattr(self, "tasks_collection"):
+            self.tasks_collection = self.db["tasks"]
     
+    def list_collection_names(self):
+        """
+        Get list of collection names in the database
+        
+        Returns:
+            list: List of collection names
+        """
+        self._ensure_connected()
+        return self.db.list_collection_names()
+
     def initialize_database(self):
         """Initialize database with collections and indexes"""
-        if not self.db:
+        """Initialize database with collections and indexes"""
+        if self.db is None:
             self.logger.error("Database connection not established")
             return False
         
         try:
             # Create collections if they don't exist
+            collection_names = self.db.list_collection_names()
             for name, collection_name in settings.MONGODB_COLLECTIONS.items():
-                if collection_name not in self.db.list_collection_names():
+                if collection_name not in collection_names:
                     self.db.create_collection(collection_name)
                     self.logger.info(f"Created collection: {collection_name}")
             
@@ -198,16 +215,23 @@ class MongoDBConnector:
     
     def reconnect(self):
         """Reconnect to MongoDB if connection is lost"""
-        if self.client:
+        if self.client is not None:
             self.client.close()
         
         self._connect()
     
     def _ensure_connected(self):
         """Ensure connection to MongoDB is established"""
-        if not self.client or not self.db:
+        if self.client is None or self.db is None:
             self.reconnect()
-    
+
+    def rollback(self):
+        """
+        Stub method for transaction rollback (MongoDB doesn't support true transactions in standalone mode)
+        """
+        self.logger.warning("Rollback called, but MongoDB standalone doesn't support transactions")
+        pass
+
     def get_collection(self, collection_name):
         """
         Get MongoDB collection
@@ -602,15 +626,22 @@ class MongoDBConnector:
     
     def close(self):
         """Close the MongoDB connection"""
-        if self.client:
-            self.client.close()
+        if self.client is not None:
+            try:
+                self.client.close()
+            except Exception as e:
+                self.logger.error(f"Error closing MongoDB connection: {e}")
             self.client = None
             self.db = None
             self.logger.info("MongoDB connection closed")
     
     def __del__(self):
         """Destructor to ensure connection is closed"""
-        self.close()
+        try:
+            self.close()
+        except (ImportError, AttributeError, TypeError) as e:
+            # Ignore errors during interpreter shutdown
+            pass
 
 
 # Helper methods for specific collections

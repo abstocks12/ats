@@ -1,3 +1,11 @@
+import os
+import sys
+import time
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from portfolio.portfolio_manager import PortfolioManager
 from portfolio.instrument_setup import InstrumentSetup
 from portfolio.data_pipeline_trigger import DataPipelineTrigger
 from database.connection_manager import get_db

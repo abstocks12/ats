@@ -1202,8 +1202,7 @@ class FinancialScraper:
         """Save the collected financial data to database using the FinancialData model"""
         try:
             # Import the FinancialData model
-            from financial_data import FinancialData
-            
+            from database.models.financial_data import FinancialData            
             # Convert the scraper data to FinancialData objects
             financial_data_objects = FinancialData.from_financial_scraper(
                 symbol=self.symbol,

@@ -33,11 +33,12 @@ class DataOrchestrator:
             db: Database connector (optional, will use global connection if not provided)
         """
         self.logger = setup_logger(__name__)
+        
+        
         self.db = db or get_db()
         
-        self.db_optimizer = db.get_optimizer()
-        self.time_partitioner = db.get_partitioner()
-        
+        self.db_optimizer = self.db.get_optimizer()
+        self.time_partitioner = self.db.get_partitioner()
         # Set up partitioning for key collections
         self._setup_partitioning()
 

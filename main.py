@@ -1,369 +1,385 @@
-"""
-Main entry point for the Automated Trading System.
-Initializes the system and provides a command-line interface.
-"""
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
-import logging
+"""
+Automated Trading System - Main Application Entry Point
+------------------------------------------------------
+This script serves as the main entry point for the Automated Trading System.
+It initializes all components and handles the system lifecycle.
+
+Author: Ashokstocks
+Date: May 2025
+"""
 import os
 import sys
-import argparse
+import time
 import signal
-from datetime import datetime
+import logging
+import argparse
+from datetime import datetime, timedelta
+import pytz
+from dotenv import load_dotenv
+import threading
 
-from database.mongodb_connector import MongoDBConnector
+# Load environment variables
+load_dotenv()
 
-# Add parent directory to path to allow imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add project root to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Import system components
 from config import settings
-from utils.logging_utils import setup_logger, log_error
+from database.mongodb_connector import MongoDBConnector
+from trading.market_hours import MarketHours
+from trading.trading_controller import TradingController
+from portfolio.portfolio_manager import PortfolioManager
+from data.orchestrator import DataOrchestrator
+from automation.scheduler import Scheduler
+from automation.daily_workflow import DailyWorkflow
+from automation.weekly_workflow import WeeklyWorkflow
+from automation.monthly_workflow import MonthlyWorkflow
+from automation.model_retraining import ModelRetraining
+from research.market_analysis import MarketAnalyzer
+from communication.notification_manager import NotificationManager
+from utils.logging_utils import setup_logger
 
-logger = setup_logger('main')
+# Global flags
+running = True
+system_components = {}
 
 def parse_arguments():
-    """Parse command-line arguments"""
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Automated Trading System')
-    
-    parser.add_argument(
-        '--config', 
-        help='Path to custom configuration file'
-    )
-    
-    parser.add_argument(
-        '--mode',
-        choices=['live', 'paper'],
-        help='Trading mode (live or paper)'
-    )
-    
-    parser.add_argument(
-        '--debug',
-        action='store_true',
-        help='Enable debug mode'
-    )
-    
-    parser.add_argument(
-        '--version',
-        action='store_true',
-        help='Show version information'
-    )
-    
-    parser.add_argument(
-        '--init-db',
-        action='store_true',
-        help='Initialize the database'
-    )
-    
-    parser.add_argument(
-        '--add-instrument',
-        help='Add an instrument to the portfolio (format: SYMBOL:EXCHANGE:TYPE)'
-    )
-    
-    parser.add_argument(
-        '--remove-instrument',
-        help='Remove an instrument from the portfolio (format: SYMBOL:EXCHANGE)'
-    )
-    
-    parser.add_argument(
-        '--collect-data',
-        action='store_true',
-        help='Run data collection for portfolio instruments'
-    )
-    
-    parser.add_argument(
-        '--start-trading',
-        action='store_true',
-        help='Start the trading system'
-    )
-    
-    parser.add_argument(
-        '--stop-trading',
-        action='store_true',
-        help='Stop the trading system'
-    )
-    
+    parser.add_argument('--mode', choices=['live', 'paper', 'backtest'], 
+                      default=os.getenv('TRADING_MODE', 'paper'),
+                      help='Trading mode: live, paper, or backtest')
+    parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                      default=os.getenv('LOG_LEVEL', 'INFO'),
+                      help='Set the logging level')
+    parser.add_argument('--config', type=str, default='default',
+                      help='Configuration profile to use')
+    parser.add_argument('--instruments', type=str, 
+                      help='Comma-separated list of instruments to trade')
+    parser.add_argument('--backtest-start', type=str, 
+                      help='Backtest start date (YYYY-MM-DD)')
+    parser.add_argument('--backtest-end', type=str, 
+                      help='Backtest end date (YYYY-MM-DD)')
     return parser.parse_args()
 
-def handle_init_db():
-    """Initialize the database"""
-    try:
-        # Importing here to avoid circular imports
-        from database.mongodb_connector import MongoDBConnector
-        
-        db = MongoDBConnector()
-        db.initialize_database()
-        
-        logger.info("Database initialized successfully")
-        return True
-    except Exception as e:
-        log_error(e, context={"action": "initialize_database"})
-        return False
+def signal_handler(sig, frame):
+    """Handle termination signals."""
+    global running
+    logger.info("Shutdown signal received, stopping system...")
+    running = False
 
-def handle_add_instrument(instrument_arg):
-    """Add an instrument to the portfolio"""
+def initialize_system(args):
+    """Initialize all system components."""
+    logger.info("Initializing Automated Trading System...")
+    
+    # Define system_components dictionary
+    # system_components = {}
+    
+    # Load settings
+    from config import settings
+    # Only try to load custom config if it's not the default value
+    if args.config and args.config != 'default':
+        config = settings.load_custom_config(args.config)
+    logger.info(f"Loaded configuration profile: {args.config or 'default'}")
+    
+    # Initialize MongoDB connection
+    db_connector = MongoDBConnector(
+        uri=os.getenv('MONGODB_URI', 'mongodb://localhost:27017/'),
+        db_name=os.getenv('DB_NAME', 'automated_trading_system')
+    )
+    logger.info("Connected to MongoDB")
+    
+    # Initialize the scheduler
+    scheduler = None
     try:
-        # Parse the instrument argument (SYMBOL:EXCHANGE:TYPE)
-        parts = instrument_arg.split(':')
-        if len(parts) < 2:
-            logger.error("Invalid instrument format. Use SYMBOL:EXCHANGE[:TYPE]")
-            return False
+        from automation.scheduler import Scheduler
+        scheduler = Scheduler(db_connector)
+        logger.info("Scheduler initialized")
+    except ImportError as e:
+        logger.warning(f"Scheduler not available: {e}")
+        # Create a simple placeholder scheduler class to avoid KeyError
+        class PlaceholderScheduler:
+            def __init__(self):
+                pass
+            def schedule_daily(self, **kwargs):
+                logger.warning("Placeholder scheduler - schedule_daily called but not implemented")
+            def start(self):
+                logger.warning("Placeholder scheduler - start called but not implemented")
+            def stop(self):
+                logger.warning("Placeholder scheduler - stop called but not implemented")
         
-        symbol = parts[0].upper()
-        exchange = parts[1].upper()
-        
-        # Type is optional, defaults to 'equity'
-        instrument_type = parts[2].lower() if len(parts) > 2 else 'equity'
-        
-        # Importing here to avoid circular imports
-        from database.mongodb_connector import MongoDBConnector
-        from portfolio.portfolio_manager import PortfolioManager
-        
-        db = MongoDBConnector()
-        portfolio_manager = PortfolioManager(db)
-        
-        result = portfolio_manager.add_instrument(
-            symbol=symbol,
-            exchange=exchange,
-            instrument_type=instrument_type
-        )
-        
-        if result:
-            logger.info(f"Instrument {symbol} added to portfolio")
-            return True
-        else:
-            logger.error(f"Failed to add instrument {symbol}")
-            return False
-    except Exception as e:
-        log_error(e, context={"action": "add_instrument", "instrument": instrument_arg})
-        return False
-
-def handle_remove_instrument(instrument_arg):
-    """Remove an instrument from the portfolio"""
-    try:
-        # Parse the instrument argument (SYMBOL:EXCHANGE)
-        parts = instrument_arg.split(':')
-        if len(parts) < 2:
-            logger.error("Invalid instrument format. Use SYMBOL:EXCHANGE")
-            return False
-        
-        symbol = parts[0].upper()
-        exchange = parts[1].upper()
-        
-        # Importing here to avoid circular imports
-        from database.mongodb_connector import MongoDBConnector
-        from portfolio.portfolio_manager import PortfolioManager
-        
-        db = MongoDBConnector()
-        portfolio_manager = PortfolioManager(db)
-        
-        result = portfolio_manager.remove_instrument(
-            symbol=symbol,
-            exchange=exchange
-        )
-        
-        if result:
-            logger.info(f"Instrument {symbol} removed from portfolio")
-            return True
-        else:
-            logger.error(f"Failed to remove instrument {symbol}")
-            return False
-    except Exception as e:
-        log_error(e, context={"action": "remove_instrument", "instrument": instrument_arg})
-        return False
-
-def handle_collect_data():
-    """Run data collection for portfolio instruments"""
-    try:
-        # Importing here to avoid circular imports
-        from database.mongodb_connector import MongoDBConnector
-        from portfolio.portfolio_manager import PortfolioManager
-        from data.orchestrator import DataOrchestrator
-        
-        db = MongoDBConnector()
-        portfolio_manager = PortfolioManager(db)
-        data_orchestrator = DataOrchestrator(db)
-        
-        # Get all active instruments
-        instruments = portfolio_manager.get_active_instruments()
-        
-        if not instruments:
-            logger.warning("No active instruments found in portfolio")
-            return False
-        
-        # Collect data for each instrument
+        scheduler = PlaceholderScheduler()
+    
+    # Always add scheduler to system_components, even if it's a placeholder
+    system_components['scheduler'] = scheduler
+    
+    # Initialize Portfolio Manager
+    from portfolio.portfolio_manager import PortfolioManager
+    portfolio_manager = PortfolioManager(db_connector)
+    if hasattr(args, 'instruments') and args.instruments:
+        instruments = args.instruments.split(',')
         for instrument in instruments:
-            logger.info(f"Collecting data for {instrument['symbol']}")
-            data_orchestrator.collect_all_data(
-                symbol=instrument['symbol'],
-                exchange=instrument['exchange'],
-                instrument_type=instrument.get('instrument_type', 'equity')
+            parts = instrument.strip().split(':')
+            if len(parts) >= 2:
+                symbol = parts[0]
+                exchange = parts[1]
+                instrument_type = parts[2] if len(parts) > 2 else "equity"
+                portfolio_manager.add_instrument(symbol, exchange, instrument_type=instrument_type)
+            else:
+                logger.warning(f"Invalid instrument format: {instrument}. Use symbol:exchange:type")
+    logger.info("Portfolio Manager initialized")
+    
+    # Initialize Data Orchestrator with a modified constructor to handle missing methods
+    from data.orchestrator import DataOrchestrator
+    
+    # Create a wrapper for the DataOrchestrator class to handle missing methods
+    class SafeDataOrchestrator(DataOrchestrator):
+        def __init__(self, db):
+            self.logger = setup_logger(__name__)
+            self.db = db
+            
+            # Safely try to access optimizer and partitioner
+            try:
+                self.db_optimizer = db.get_optimizer()
+            except AttributeError:
+                self.logger.warning("Database optimizer not available")
+                self.db_optimizer = None
+                
+            try:
+                self.time_partitioner = db.get_partitioner()
+            except AttributeError:
+                self.logger.warning("Time partitioner not available")
+                self.time_partitioner = None
+            
+            # Skip partitioning if not available
+            if self.time_partitioner:
+                self._setup_partitioning()
+            else:
+                self.logger.warning("Skipping collection partitioning setup")
+            
+            # Track ongoing collection tasks
+            self.active_collections = {}
+            self.collection_locks = {}
+            
+            # Create locks for different data types
+            for data_type in ["market", "financial", "news", "global", "alternative"]:
+                self.collection_locks[data_type] = threading.Lock()
+    
+    data_orchestrator = SafeDataOrchestrator(db_connector)
+    logger.info("Data Orchestrator initialized")
+    
+    # Initialize Market Analyzer
+    market_analyzer = None
+    try:
+        from research.market_analysis import MarketAnalyzer
+        market_analyzer = MarketAnalyzer(db_connector)
+        logger.info("Market Analyzer initialized")
+    except ImportError as e:
+        logger.warning(f"Market Analyzer not available: {e}")
+    
+    system_components['market_analyzer'] = market_analyzer
+    
+    # Initialize Notification Manager
+    notification_manager = None
+    try:
+        from communication.notification_manager import NotificationManager
+        notification_manager = NotificationManager(db_connector)
+        logger.info("Notification Manager initialized")
+    except ImportError as e:
+        logger.warning(f"Notification Manager not available: {e}")
+    
+    system_components['notification_manager'] = notification_manager
+    
+    # Initialize Market Hours
+    from trading.market_hours import MarketHours
+    market_hours = MarketHours()
+    logger.info("Market Hours initialized")
+    
+    # Initialize components based on mode
+    mode = getattr(args, 'mode', 'paper')  # Default to paper if not specified
+    
+    if mode == 'backtest':
+        # Initialize Backtest Engine
+        try:
+            from backtesting.engine import BacktestEngine
+            
+            backtest_start = getattr(args, 'backtest_start', None)
+            backtest_end = getattr(args, 'backtest_end', None)
+            
+            backtest_engine = BacktestEngine(
+                db_connector=db_connector, 
+                portfolio_manager=portfolio_manager,
+                start_date=backtest_start,
+                end_date=backtest_end
             )
-        
-        logger.info("Data collection completed")
-        return True
-    except Exception as e:
-        log_error(e, context={"action": "collect_data"})
-        return False
-
-def handle_start_trading():
-    """Start the trading system"""
-    try:
-        # Importing here to avoid circular imports
-        from database.mongodb_connector import MongoDBConnector
-        from trading.trading_controller import TradingController
-        
-        db = MongoDBConnector()
-        trading_controller = TradingController(db, mode=settings.TRADING_MODE)
-        
-        result = trading_controller.start_trading()
-        
-        if result:
-            logger.info(f"Trading started in {settings.TRADING_MODE} mode")
+            logger.info("Backtest Engine initialized")
+            system_components['backtest_engine'] = backtest_engine
+        except ImportError as e:
+            logger.warning(f"Backtest Engine not available: {e}")
+    else:
+        # Initialize Trading Controller
+        try:
+            from trading.trading_controller import TradingController
             
-            # Keep running until interrupted
-            def signal_handler(sig, frame):
-                logger.info("Stopping trading...")
-                trading_controller.stop_trading()
-                sys.exit(0)
-            
-            signal.signal(signal.SIGINT, signal_handler)
-            logger.info("Press Ctrl+C to stop trading")
-            
-            # Keep the main thread alive
-            while True:
-                signal.pause()
-        else:
-            logger.error("Failed to start trading")
-            return False
-            
-        return True
-    except Exception as e:
-        log_error(e, context={"action": "start_trading"})
-        return False
-
-def handle_stop_trading():
-    """Stop the trading system"""
-    try:
-        # Importing here to avoid circular imports
-        from database.mongodb_connector import MongoDBConnector
-        from trading.trading_controller import TradingController
+            trading_controller = TradingController(
+                db_connector=db_connector,
+                mode=mode
+            )
+            logger.info(f"Trading Controller initialized in {mode} mode")
+            system_components['trading_controller'] = trading_controller
+        except ImportError as e:
+            logger.error(f"Trading Controller not available: {e}")
+            trading_controller = None
         
-        db = MongoDBConnector()
-        trading_controller = TradingController(db)
-        
-        result = trading_controller.stop_trading()
-        
-        if result:
-            logger.info("Trading stopped")
-            return True
-        else:
-            logger.error("Failed to stop trading")
-            return False
-    except Exception as e:
-        log_error(e, context={"action": "stop_trading"})
-        return False
+        # Initialize Workflow components
+        try:
+            from automation import DailyWorkflow, WeeklyWorkflow, MonthlyWorkflow
+            from automation.model_retraining import ModelRetraining
+            
+            daily_workflow = DailyWorkflow(db_connector)
+            weekly_workflow = WeeklyWorkflow(db_connector)
+            monthly_workflow = MonthlyWorkflow(db_connector)
+            model_retraining = ModelRetraining(db_connector)
+            
+            # Register workflow tasks with scheduler
+            daily_workflow.register_tasks(scheduler)
+            weekly_workflow.register_tasks(scheduler)
+            monthly_workflow.register_tasks(scheduler)
+            
+            # Schedule model retraining during off-hours
+            scheduler.schedule_daily(
+                func=model_retraining.retrain_all_models,
+                time_str="01:00",  # 1 AM
+                name="Daily Model Retraining"
+            )
+            
+            # Store components in global dict
+            system_components.update({
+                'daily_workflow': daily_workflow,
+                'weekly_workflow': weekly_workflow,
+                'monthly_workflow': monthly_workflow,
+                'model_retraining': model_retraining
+            })
+        except ImportError as e:
+            logger.warning(f"Workflow components not available: {e}")
+    
+    # Common components for all modes
+    system_components.update({
+        'settings': settings,
+        'db_connector': db_connector,
+        'portfolio_manager': portfolio_manager,
+        'data_orchestrator': data_orchestrator,
+        'market_hours': market_hours
+    })
+    
+    logger.info("System initialization complete")
+    return system_components
 
-def print_banner():
-    """Print a welcome banner"""
-    version_info = settings.get_version_info()
+def run_backtest():
+    """Run system in backtest mode."""
+    logger.info("Starting backtest...")
+    backtest_engine = system_components['backtest_engine']
+    result = backtest_engine.run()
+    logger.info("Backtest completed")
     
-    print("\n" + "=" * 60)
-    print(f"  AUTOMATED TRADING SYSTEM v{version_info['version']}")
-    print(f"  Mode: {version_info['trading_mode']}  |  Environment: {version_info['environment']}")
-    print(f"  Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 60 + "\n")
+    # Generate backtest report
+    backtest_engine.generate_report(result)
+    
+    logger.info("Backtest report generated")
+    return result
 
-# In main.py or app initialization
-def initialize_database():
-    db_connector = MongoDBConnector()
+def run_live_system():
+    """Run the live trading system."""
+    global running
     
-    # Run initial optimization
-    optimizer = db_connector.get_optimizer()
-    optimization_result = optimizer.optimize_database()
+    logger.info("Starting live system...")
     
-    # Set up partitioning
-    partitioner = db_connector.get_partitioner()
-    collections = ["market_data_collection", "trades_collection", "news_collection"]
-    for collection in collections:
-        partitioner.setup_partitioning(collection)
+    # Get components
+    scheduler = system_components['scheduler']
+    trading_controller = system_components['trading_controller']
+    notification_manager = system_components['notification_manager']
+    market_hours = system_components['market_hours']
     
-    # Log results
-    logging.info(f"Database optimization completed: {optimization_result['status']}")
+    # Start the scheduler
+    scheduler.start()
     
-    return db_connector
+    # Send startup notification
+    notification_manager.send_system_alert("Automated Trading System started", level="info")
+    
+    # Track market status
+    is_market_open_prev = False
+    
+    # Main system loop
+    while running:
+        # Check if market is open
+        is_market_open_current = market_hours.is_market_open()
+        
+        # Detect market hours transitions
+        if is_market_open_current and not is_market_open_prev:
+            logger.info("Market opened, activating trading system")
+            notification_manager.send_system_alert("Market opened. Trading system activated.", level="info")
+            trading_controller.start_trading()
+        elif not is_market_open_current and is_market_open_prev:
+            logger.info("Market closed, deactivating trading system")
+            notification_manager.send_system_alert("Market closed. Trading system deactivated.", level="info")
+            trading_controller.stop_trading()
+        
+        # Update previous market status
+        is_market_open_prev = is_market_open_current
+        
+        # Sleep to prevent high CPU usage
+        time.sleep(5)
+    
+    # Graceful shutdown
+    logger.info("Shutting down live system...")
+    
+    # Stop trading if active
+    if is_market_open_prev:
+        trading_controller.stop_trading()
+    
+    # Stop scheduler
+    scheduler.stop()
+    
+    # Send shutdown notification
+    notification_manager.send_system_alert("Automated Trading System stopped", level="info")
+    
+    logger.info("System shutdown complete")
 
 def main():
-    """Main function"""
+    """Main entry point for the Automated Trading System."""
+    # Set up signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Parse command line arguments
     args = parse_arguments()
     
-    # Load custom configuration if provided
-    if args.config:
-        settings.load_custom_config(args.config)
+    # Setup logger
+    global logger
+    logger = setup_logger('main', level=args.log_level)
     
-    # Override settings with command line arguments
-    if args.mode:
-        settings.TRADING_MODE = args.mode
-    
-    if args.debug:
-        settings.DEBUG = True
-    
-    # Show version information
-    if args.version:
-        version_info = settings.get_version_info()
-        print(f"Automated Trading System v{version_info['version']}")
-        print(f"Environment: {version_info['environment']}")
-        print(f"Trading Mode: {version_info['trading_mode']}")
-        return
-    
-    # Print welcome banner
-    print_banner()
-    
-    # Initialize the database
-    if args.init_db:
-        if handle_init_db():
-            print("Database initialized successfully")
+    try:
+        # Initialize the system
+        initialize_system(args)
+        
+        # Run the system based on mode
+        if args.mode == 'backtest':
+            run_backtest()
         else:
-            print("Failed to initialize database")
-        return
+            run_live_system()
     
-    # Add an instrument to the portfolio
-    if args.add_instrument:
-        if handle_add_instrument(args.add_instrument):
-            print(f"Instrument {args.add_instrument} added to portfolio")
-        else:
-            print(f"Failed to add instrument {args.add_instrument}")
-        return
-    
-    # Remove an instrument from the portfolio
-    if args.remove_instrument:
-        if handle_remove_instrument(args.remove_instrument):
-            print(f"Instrument {args.remove_instrument} removed from portfolio")
-        else:
-            print(f"Failed to remove instrument {args.remove_instrument}")
-        return
-    
-    # Collect data for portfolio instruments
-    if args.collect_data:
-        if handle_collect_data():
-            print("Data collection completed")
-        else:
-            print("Data collection failed")
-        return
-    
-    # Start the trading system
-    if args.start_trading:
-        handle_start_trading()
-        return
-    
-    # Stop the trading system
-    if args.stop_trading:
-        if handle_stop_trading():
-            print("Trading stopped")
-        else:
-            print("Failed to stop trading")
-        return
-    
-    # If no specific action is requested, print help
-    print("No action specified. Use --help to see available options.")
+    except Exception as e:
+        logger.critical(f"System failed: {str(e)}", exc_info=True)
+        if 'notification_manager' in system_components:
+            system_components['notification_manager'].send_system_alert(
+                f"CRITICAL ERROR: System failed: {str(e)}",
+                level="critical"
+            )
+        sys.exit(1)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

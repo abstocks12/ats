@@ -44,6 +44,7 @@ WHATSAPP_API_KEY = os.getenv('WHATSAPP_API_KEY', '')
 WHATSAPP_PHONE_NUMBER_ID = os.getenv('WHATSAPP_PHONE_NUMBER_ID', '')
 WHATSAPP_RECIPIENT = os.getenv('WHATSAPP_RECIPIENT', '')
 
+
 # System settings
 DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 TRADING_MODE = os.getenv('TRADING_MODE', 'paper')  # 'paper' or 'live'
@@ -107,6 +108,105 @@ FINANCIAL_SOURCES = {
         'url_template': 'https://www.screener.in/company/{}/'
     }
 }
+# Slack settings
+SLACK_BOT_TOKEN = os.getenv('SLACK_BOT_TOKEN', '')
+SLACK_CHANNEL_ID = os.getenv('SLACK_CHANNEL_ID', '')
+SLACK_API_SIGNING_SECRET = os.getenv('SLACK_API_SIGNING_SECRET', '')
+
+# Set to True if Slack integration should be enabled
+SLACK_ENABLED = os.getenv('SLACK_ENABLED', 'False').lower() == 'true'
+
+# Channel settings for different notification types
+SLACK_CHANNELS = {
+    'trades': os.getenv('SLACK_TRADES_CHANNEL', SLACK_CHANNEL_ID),
+    'alerts': os.getenv('SLACK_ALERTS_CHANNEL', SLACK_CHANNEL_ID),
+    'reports': os.getenv('SLACK_REPORTS_CHANNEL', SLACK_CHANNEL_ID),
+    'system': os.getenv('SLACK_SYSTEM_CHANNEL', SLACK_CHANNEL_ID)
+}
+
+# System integration and component settings
+SYSTEM_COMPONENTS = {
+    'notification_manager': True,
+    'report_distributor': True,
+    'conversation_manager': SLACK_ENABLED,
+    'scheduler': True,
+    'market_data_collector': True,
+    'market_analyzer': True,
+    'portfolio_manager': True,
+    'trading_controller': True,
+    'time_series_partitioner': True
+}
+
+
+# Notification settings
+NOTIFICATION_CONFIG = {
+    'channels': {
+        'slack': SLACK_ENABLED,
+        'database': True,
+        'whatsapp': WHATSAPP_ENABLED
+    },
+    'levels': {
+        'debug': ['database'],
+        'info': ['database', 'slack'],
+        'warning': ['database', 'slack'],
+        'error': ['database', 'slack'],
+        'critical': ['database', 'slack', 'whatsapp'] if WHATSAPP_ENABLED else ['database', 'slack']
+    },
+    'batch_notifications': True,
+    'batch_interval': 300,  # seconds
+    'max_slack_notifications_per_minute': 10
+}
+# Scheduler settings
+SCHEDULER_CONFIG = {
+    'min_interval': 1,  # Minimum time between task checks (seconds)
+    'max_concurrent_tasks': 10,  # Maximum number of concurrent tasks
+    'task_timeout': 3600,  # Default task timeout (seconds)
+    'retry_failed_tasks': True,  # Retry failed tasks
+    'max_retries': 3,  # Maximum number of retries for failed tasks
+    'retry_delay': 300,  # Delay between retries (seconds)
+    'persistent_storage': True,  # Store tasks in database
+    'log_task_output': True,  # Log task output
+    'shutdown_timeout': 60,  # Maximum time to wait for running tasks on shutdown (seconds)
+    'auto_recover': True  # Automatically recover tasks from database on startup
+}
+# Email settings
+EMAIL_SENDER = os.getenv('EMAIL_SENDER', '')
+EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD', '')
+EMAIL_SMTP_SERVER = os.getenv('EMAIL_SMTP_SERVER', 'smtp.gmail.com')
+EMAIL_SMTP_PORT = int(os.getenv('EMAIL_SMTP_PORT', 587))
+EMAIL_RECIPIENTS = os.getenv('EMAIL_RECIPIENTS', '').split(',')
+
+# Set to True if email integration should be enabled
+EMAIL_ENABLED = os.getenv('EMAIL_ENABLED', 'False').lower() == 'true'
+# Report distribution settings
+REPORT_CONFIG = {
+    'default_channels': ['slack', 'database'],
+    'formats': ['text', 'pdf', 'html'],
+    'schedule': {
+        'daily_morning': {
+            'time': '09:00',
+            'report_type': 'daily',
+            'channels': ['slack', 'database']
+        },
+        'daily_evening': {
+            'time': '16:30',
+            'report_type': 'daily',
+            'channels': ['slack', 'database']
+        },
+        'weekly': {
+            'day': 'Friday',
+            'time': '16:00',
+            'report_type': 'weekly',
+            'channels': ['slack', 'database', 'email'] if EMAIL_ENABLED else ['slack', 'database']
+        },
+        'monthly': {
+            'day': 1,
+            'time': '09:00',
+            'report_type': 'monthly',
+            'channels': ['slack', 'database', 'email'] if EMAIL_ENABLED else ['slack', 'database']
+        }
+    }
+}
 
 # Sector to keywords mapping
 # This helps in filtering news that might be relevant to a stock's sector
@@ -151,7 +251,21 @@ MONGODB_COLLECTIONS = {
     'predictions': 'predictions',
     'trades': 'trades',
     'performance': 'performance',
-    'system_logs': 'system_logs'
+    'system_logs': 'system_logs',
+    'tasks': 'tasks',  # Add this line
+    'conversations': 'conversations',  # For conversation management
+    'notifications': 'notifications',  # For storing notification history
+    'reports': 'reports'  
+    # For report storage
+    # 'portfolio': 'portfolio',
+    # 'market_data': 'market_data',
+    # 'news': 'news',
+    # 'financial': 'financial',
+    # 'predictions': 'predictions',
+    # 'trades': 'trades',
+    # 'performance': 'performance',
+    # 'system_logs': 'system_logs',
+    # 'tasks': 'tasks'
 }
 
 # System version

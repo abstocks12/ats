@@ -25,8 +25,14 @@ class TimeSeriesPartitioner:
         """
         self.db = db_connector
         self.logger = self._setup_logger()
-        
-        # Configure partition settings
+        self.db_connector = db_connector
+        # Direct access to PyMongo database
+        if hasattr(db_connector, 'db'):
+            self.pymongo_db = db_connector.db
+        else:
+            self.pymongo_db = None
+        self.logger = self._setup_logger()
+            # Configure partition settings
         self.partition_configs = {
             "market_data_collection": {
                 "partition_field": "timestamp",
@@ -137,7 +143,8 @@ class TimeSeriesPartitioner:
         partition_name = f"{collection_name}_{suffix}"
         
         # Check if partition already exists
-        if partition_name in self.db.list_collection_names():
+        collection_names = self.db.list_collection_names()
+        if partition_name in collection_names:
             self.logger.info(f"Partition {partition_name} already exists")
             return partition_name
         
@@ -208,7 +215,8 @@ class TimeSeriesPartitioner:
             partition_name = f"{collection_name}_{suffix}"
             
             # Check if partition already exists
-            if partition_name in self.db.list_collection_names():
+            collection_names = self.db.list_collection_names()
+            if partition_name in collection_names:
                 self.logger.info(f"Partition {partition_name} already exists")
             else:
                 # Create the partition collection
@@ -486,7 +494,8 @@ class TimeSeriesPartitioner:
         partition_name = self.get_partition_for_date(collection_name, date_filter)
         
         # Check if partition exists
-        if partition_name not in self.db.list_collection_names():
+        collection_names = self.db.list_collection_names()
+        if partition_name not in collection_names:
             return collection_name, query
         
         return partition_name, query
@@ -536,7 +545,8 @@ class TimeSeriesPartitioner:
         
         while current_date <= end_date:
             partition_name = self.get_partition_for_date(collection_name, current_date)
-            if partition_name not in target_partitions and partition_name in self.db.list_collection_names():
+            collection_names = self.db.list_collection_names()
+            if partition_name not in target_partitions and partition_name in collection_names:
                 target_partitions.append(partition_name)
             
             # Increment date based on partition interval
@@ -611,9 +621,9 @@ class TimeSeriesPartitioner:
                     continue
                 
                 # Get all partitions for this collection
-                partitions = [name for name in self.db.list_collection_names() 
+                collection_names = self.db.list_collection_names()
+                partitions = [name for name in collection_names 
                              if name.startswith(f"{collection_name}_")]
-                
                 # Calculate cutoff date based on partitions to keep
                 now = datetime.now()
                 partitions_to_keep = config.get("partitions_to_keep", 3)

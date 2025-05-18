@@ -255,7 +255,8 @@ MONGODB_COLLECTIONS = {
     'tasks': 'tasks',  # Add this line
     'conversations': 'conversations',  # For conversation management
     'notifications': 'notifications',  # For storing notification history
-    'reports': 'reports'  
+    'reports': 'reports' ,
+    'financial_data_raw': 'financial_data_raw',  # Add this line 
     # For report storage
     # 'portfolio': 'portfolio',
     # 'market_data': 'market_data',

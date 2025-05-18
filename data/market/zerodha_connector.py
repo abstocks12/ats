@@ -59,6 +59,10 @@ class ZerodhaConnector:
         if self.access_token:
             self.kite.set_access_token(self.access_token)
         
+        if not self.simulated_mode and not self.access_token:
+            # Try to authenticate
+            self.authenticate()
+
         # Initialize ticker (websocket connection)
         self.ticker = None
         self.ticker_connected = False
@@ -113,6 +117,54 @@ class ZerodhaConnector:
         except Exception as e:
             self.logger.error(f"Error saving access token: {e}")
     
+    def authenticate(self, request_token=None):
+        """
+        Authenticate with Zerodha
+        
+        Args:
+            request_token (str, optional): Request token from manual login process
+            
+        Returns:
+            bool: True if authenticated successfully
+        """
+        if self.simulated_mode:
+            self.logger.info("Simulated mode: Skipping authentication")
+            return True
+        
+        # If we already have a valid access token, we're good
+        if self.access_token:
+            try:
+                # Test if token is valid by getting profile
+                self.kite.profile()
+                self.logger.info("Using existing access token")
+                return True
+            except Exception:
+                self.logger.warning("Existing access token is invalid, will try to re-authenticate")
+                self.access_token = None
+        
+        # If we have a request token, use it to generate a session
+        if request_token:
+            return self.generate_session(request_token)
+        
+        # No valid token or request token, prompt for manual login
+        login_url = self.generate_login_url()
+        self.logger.info(f"""
+        ==== Zerodha Authentication Required ====
+        Please complete these steps to authenticate:
+        
+        1. Open this URL in your browser: {login_url}
+        2. Login with your Zerodha credentials
+        3. You will be redirected to a URL containing the request token
+        4. Run this command with the request token:
+        python scripts/zerodha_login.py --request-token YOUR_TOKEN
+        
+        Until authenticated, the system will use simulated data.
+        """)
+        
+        # Fall back to simulated mode for now
+        self.simulated_mode = True
+        return False
+
     def _load_instruments(self):
         """Load instrument details from Zerodha"""
         try:

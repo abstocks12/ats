@@ -12,6 +12,8 @@ import re
 from typing import List, Dict, Any, Optional, Union, Set
 from bs4 import BeautifulSoup
 import requests
+import ssl
+import nltk
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -21,6 +23,7 @@ from database.connection_manager import get_db
 from utils.logging_utils import setup_logger, log_error, log_data_collection
 from utils.helper_functions import retry_function, get_date_range, normalize_symbol, extract_stock_symbol
 from data.news.sentiment_analyzer import SentimentAnalyzer
+
 
 class NewsAggregator:
     """
@@ -48,6 +51,20 @@ class NewsAggregator:
         
         # Initialize source configs
         self.sources = self._initialize_sources()
+
+        try:
+            # Try to create an unverified SSL context for NLTK
+            try:
+                _create_unverified_https_context = ssl._create_unverified_context
+            except AttributeError:
+                pass
+            else:
+                ssl._create_default_https_context = _create_unverified_https_context
+            
+            # Download NLTK data
+            nltk.download('punkt', quiet=True)
+        except Exception as e:
+            print(f"Warning: Failed to download NLTK data: {e}")
     
     def _initialize_sources(self) -> Dict[str, Dict[str, Any]]:
         """

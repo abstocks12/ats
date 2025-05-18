@@ -1202,7 +1202,8 @@ class FinancialScraper:
         """Save the collected financial data to database using the FinancialData model"""
         try:
             # Import the FinancialData model
-            from database.models.financial_data import FinancialData            
+            from database.models.financial_data import FinancialData  
+            
             # Convert the scraper data to FinancialData objects
             financial_data_objects = FinancialData.from_financial_scraper(
                 symbol=self.symbol,
@@ -1210,85 +1211,114 @@ class FinancialScraper:
                 scraper_data=self.financial_data
             )
             
-            # Save to database
-            cursor = self.db.cursor()
-            
+            # Save each financial data object to MongoDB
             for financial_data_obj in financial_data_objects:
                 # Convert to dictionary
                 data_dict = financial_data_obj.to_dict()
                 
-                # Convert datetime objects to strings
-                report_date_str = data_dict['report_date'].strftime('%Y-%m-%d %H:%M:%S')
-                scraped_at_str = data_dict['scraped_at'].strftime('%Y-%m-%d %H:%M:%S')
-                created_at_str = data_dict['created_at'].strftime('%Y-%m-%d %H:%M:%S')
-                updated_at_str = data_dict['updated_at'].strftime('%Y-%m-%d %H:%M:%S')
-                
-                # Convert data to JSON
-                data_json = json.dumps(data_dict['data'])
-                
                 # Check if record exists
-                cursor.execute(
-                    """SELECT id FROM financial_data 
-                       WHERE symbol = ? AND exchange = ? AND report_type = ? AND period = ?""",
-                    (self.symbol, self.exchange, data_dict['report_type'], data_dict['period'])
+                existing = self.db.find_one(
+                    "financial",
+                    {
+                        "symbol": self.symbol,
+                        "exchange": self.exchange,
+                        "report_type": data_dict['report_type'],
+                        "period": data_dict['period']
+                    }
                 )
                 
-                existing_id = cursor.fetchone()
-                
-                if existing_id:
+                if existing:
                     # Update existing record
-                    cursor.execute(
-                        """UPDATE financial_data 
-                           SET data = ?, report_date = ?, scraped_at = ?, updated_at = datetime('now')
-                           WHERE id = ?""",
-                        (data_json, report_date_str, scraped_at_str, existing_id[0])
+                    self.db.update_one(
+                        "financial",
+                        {
+                            "symbol": self.symbol,
+                            "exchange": self.exchange,
+                            "report_type": data_dict['report_type'],
+                            "period": data_dict['period']
+                        },
+                        {"$set": {
+                            "data": data_dict['data'],
+                            "report_date": data_dict['report_date'],
+                            "scraped_at": data_dict['scraped_at'],
+                            "updated_at": datetime.now()
+                        }}
                     )
                     self.logger.info(
                         f"Updated {data_dict['report_type']} financial data for {self.symbol}:{self.exchange} - {data_dict['period']}"
                     )
                 else:
                     # Insert new record
-                    cursor.execute(
-                        """INSERT INTO financial_data 
-                           (symbol, exchange, report_type, period, report_date, data, 
-                            scraped_at, created_at, updated_at) 
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            self.symbol, self.exchange, data_dict['report_type'], data_dict['period'], 
-                            report_date_str, data_json, scraped_at_str, created_at_str, updated_at_str
-                        )
-                    )
+                    self.db.insert_one("financial", data_dict)
                     self.logger.info(
                         f"Inserted new {data_dict['report_type']} financial data for {self.symbol}:{self.exchange} - {data_dict['period']}"
                     )
             
             # Create a unique filename based on symbol and date for the full data
+            from utils.helper_functions import sanitize_filename
             filename = sanitize_filename(f"{self.symbol}_{self.exchange}_financial_data_{datetime.now().strftime('%Y%m%d')}.json")
             
-            # Also save the complete raw data for archival purposes
-            full_data_json = json.dumps(self.financial_data)
-            cursor.execute(
-                """INSERT INTO financial_data_raw 
-                   (symbol, exchange, data, timestamp, filename) 
-                   VALUES (?, ?, ?, datetime('now'), ?)""",
-                (self.symbol, self.exchange, full_data_json, filename)
+            # Instead of using financial_data_raw, store raw data in the financial collection
+            # with a special report_type to differentiate it
+            import json
+            raw_data_doc = {
+                "symbol": self.symbol,
+                "exchange": self.exchange,
+                "report_type": "raw_data",  # Special report type for raw data
+                "period": datetime.now().strftime('%Y%m%d'),  # Use current date as period
+                "data": self.financial_data,  # Store the complete raw data
+                "filename": filename,
+                "report_date": datetime.now(),
+                "scraped_at": datetime.now(),
+                "created_at": datetime.now(),
+                "updated_at": datetime.now()
+            }
+            
+            # Save to the existing financial collection instead
+            existing_raw = self.db.find_one(
+                "financial",
+                {
+                    "symbol": self.symbol,
+                    "exchange": self.exchange,
+                    "report_type": "raw_data",
+                    "period": raw_data_doc["period"]
+                }
             )
             
-            # Commit changes
-            self.db.commit()
+            if existing_raw:
+                self.db.update_one(
+                    "financial",
+                    {
+                        "symbol": self.symbol,
+                        "exchange": self.exchange,
+                        "report_type": "raw_data",
+                        "period": raw_data_doc["period"]
+                    },
+                    {"$set": raw_data_doc}
+                )
+            else:
+                self.db.insert_one("financial", raw_data_doc)
             
             # Log data collection
+            from utils.logging_utils import log_data_collection
             log_data_collection(
+                self.logger,
                 data_type="financial_data",
                 symbol=self.symbol,
                 exchange=self.exchange,
-                source="enhanced_financial_scraper"
+                status="completed",
+                count=len(financial_data_objects)
             )
             
+            return True
+            
         except Exception as e:
+            from utils.logging_utils import log_error
             log_error(e, context={"action": "save_to_database", "symbol": self.symbol})
-            # Rollback in case of error
+            # MongoDB standalone doesn't support transactions, but we'll call rollback for API consistency
             self.db.rollback()
+            return False
+    
 
 # Example usage
 if __name__ == "__main__":

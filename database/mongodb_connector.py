@@ -227,9 +227,12 @@ class MongoDBConnector:
 
     def rollback(self):
         """
-        Stub method for transaction rollback (MongoDB doesn't support true transactions in standalone mode)
+        Handle rollback requests (MongoDB standalone doesn't support transactions)
+        This is a no-op method to maintain API compatibility
         """
         self.logger.warning("Rollback called, but MongoDB standalone doesn't support transactions")
+        # In a production system, you might implement a custom rollback mechanism
+        # using backup collections or journaling
         pass
 
     def get_collection(self, collection_name):

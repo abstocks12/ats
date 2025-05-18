@@ -27,6 +27,7 @@ class HistoricalDataCollector:
         self.logger = logging.getLogger(__name__)
         self.zerodha = ZerodhaConnector()
         self.partitioner = db_connector.get_partitioner()
+    
     def collect_data(self, symbol, exchange, timeframe="day", days=365, end_date=None, max_retries=3):
         """
         Collect historical data for an instrument

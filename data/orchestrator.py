@@ -164,18 +164,9 @@ class DataOrchestrator:
         )
 
     def collect_market_data(self, symbol: str, exchange: str, timeframes: List[str] = None,
-                           days: int = None) -> bool:
+                       days: int = None) -> bool:
         """
         Collect market data for an instrument
-        
-        Args:
-            symbol (str): Instrument symbol
-            exchange (str): Exchange code
-            timeframes (list, optional): List of timeframes to collect
-            days (int, optional): Number of days to collect
-            
-        Returns:
-            bool: True if successful, False otherwise
         """
         # Acquire lock for market data collection
         if not self.collection_locks["market"].acquire(blocking=False):
@@ -204,40 +195,29 @@ class DataOrchestrator:
                 # Create collector instance
                 collector = HistoricalDataCollector(self.db)
                 
-                # Collect data for each timeframe
-                success_count = 0
-                for timeframe in timeframes:
-                    try:
-                        result = collector.collect_data(
-                            symbol=symbol,
-                            exchange=exchange,
-                            timeframe=timeframe,
-                            days=days
-                        )
-                        
-                        if result:
-                            success_count += 1
-                            self.logger.info(f"Collected {timeframe} data for {symbol}:{exchange}")
-                        else:
-                            self.logger.warning(f"Failed to collect {timeframe} data for {symbol}:{exchange}")
-                    except Exception as e:
-                        log_error(e, context={"action": "collect_market_data", "timeframe": timeframe})
+                # Collect data for all timeframes at once
+                results = collector.collect_data(
+                    symbol=symbol,
+                    exchange=exchange,
+                    timeframes=timeframes,
+                    days=days
+                )
                 
-                # Update collection status
-                if success_count > 0:
+                # Check if any timeframe was successful
+                if any(results.values()):
                     self._update_single_collection_status(symbol, exchange, "historical", True)
                     return True
                 else:
                     self._update_single_collection_status(symbol, exchange, "historical", False)
                     return False
-                
+                    
             except ImportError:
                 self.logger.error("HistoricalDataCollector not available")
                 return False
             except Exception as e:
                 log_error(e, context={"action": "collect_market_data"})
                 return False
-                
+                    
         finally:
             # Remove from active collections
             collection_key = f"market_{symbol}_{exchange}"
@@ -246,7 +226,7 @@ class DataOrchestrator:
             
             # Release the lock
             self.collection_locks["market"].release()
-    
+
     def collect_financial_data(self, symbol: str, exchange: str) -> bool:
         """
         Collect financial data for an instrument

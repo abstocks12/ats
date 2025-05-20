@@ -126,48 +126,50 @@ class DataPipelineTrigger:
         # Re-raise to see full traceback
         raise
     
+   
+
     def _collect_historical_data(self, symbol: str, exchange: str, config: Dict[str, Any]) -> None:
-       """
-       Collect historical market data
-       
-       Args:
-           symbol (str): Instrument symbol
-           exchange (str): Exchange code
-           config (dict): Instrument configuration
-       """
-       try:
-           self.logger.info(f"Collecting historical data for {symbol}:{exchange}")
-           
-           # Import necessary components
-           # We import here to avoid circular imports
-           try:
-               # First try to import the real implementation
-               collector = HistoricalDataCollector(self.db)
-           except ImportError:
-               # If not available, create a placeholder implementation
-               self.logger.warning("HistoricalDataCollector not available, using placeholder")
-               
-               class PlaceholderCollector:
-                   def __init__(self, db):
-                       self.db = db
-                       self.logger = setup_logger("placeholder_collector")
-                   
-                   def collect_data(self, symbol, exchange, timeframe, days):
-                       self.logger.info(f"Placeholder: Collecting {timeframe} data for {symbol}:{exchange}")
-                       
-                       # Update data collection status
-                       
-                       portfolio_manager = PortfolioManager(self.db)
-                       portfolio_manager.update_data_collection_status(symbol, exchange, "historical", True)
-                       
-                       return True
-               
-               collector = PlaceholderCollector(self.db)
-           
-           # Collect data for each timeframe
-           for timeframe in config.get("timeframes", ["day", "60min", "5min"]):
+        """
+        Collect historical market data
+        
+        Args:
+            symbol (str): Instrument symbol
+            exchange (str): Exchange code
+            config (dict): Instrument configuration
+        """
+        try:
+            self.logger.info(f"Collecting historical data for {symbol}:{exchange}")
+            
+            # Import necessary components
+            # We import here to avoid circular imports
+            try:
+                # First try to import the real implementation
+                collector = HistoricalDataCollector(self.db)
+            except ImportError:
+                # If not available, create a placeholder implementation
+                self.logger.warning("HistoricalDataCollector not available, using placeholder")
+                
+                class PlaceholderCollector:
+                    def __init__(self, db):
+                        self.db = db
+                        self.logger = setup_logger("placeholder_collector")
+                    
+                    def collect_data(self, symbol, exchange, timeframe, days):
+                        self.logger.info(f"Placeholder: Collecting {timeframe} data for {symbol}:{exchange}")
+                        
+                        # Update data collection status
+                        
+                        portfolio_manager = PortfolioManager(self.db)
+                        portfolio_manager.update_data_collection_status(symbol, exchange, "historical", True)
+                        
+                        return True
+                
+                collector = PlaceholderCollector(self.db)
+            
+            # Collect data for each timeframe
+            for timeframe in config.get("timeframes", ["day", "60min", "5min"]):
                 try:
-                   # Convert timeframe to collector format if needed
+                    # Convert timeframe to collector format if needed
                     collector_timeframe = timeframe
                     if timeframe == "60min":
                         collector_timeframe = "hour"
@@ -187,9 +189,11 @@ class DataPipelineTrigger:
                         days = 7  # 1 week
                     else:
                         days = 30  # Default
+                    
                     try:
-                        # Collect data
-                        collector.collect_data(symbol, exchange, collector_timeframe, days)
+                        # BUGFIX: Pass collector_timeframe as a list with one item to prevent
+                        # character-by-character iteration. This ensures we pass ['day'] instead of 'day'.
+                        collector.collect_data(symbol, exchange, [collector_timeframe], days)
                     except ZeroDivisionError as zde:
                         self.logger.error(f"Division by zero error in historical data collection: {zde}")
                         self.logger.error(f"This likely indicates missing or invalid data for {symbol}:{exchange}")
@@ -200,24 +204,24 @@ class DataPipelineTrigger:
                     self.logger.error(f"Error collecting data for timeframe {timeframe}: {e}")
                     continue
             
-           # Update data collection status
-          
-           portfolio_manager = PortfolioManager(self.db)
-           portfolio_manager.update_data_collection_status(symbol, exchange, "historical", True)
-           
-           self.logger.info(f"Completed historical data collection for {symbol}:{exchange}")
-           
-       except Exception as e:
-           log_error(e, context={"action": "collect_historical_data", "symbol": symbol, "exchange": exchange})
-           
-           # Update data collection status with failure
-           try:
-               
-               portfolio_manager = PortfolioManager(self.db)
-               portfolio_manager.update_data_collection_status(symbol, exchange, "historical", False)
-           except:
-               pass
-   
+            # Update data collection status
+            
+            portfolio_manager = PortfolioManager(self.db)
+            portfolio_manager.update_data_collection_status(symbol, exchange, "historical", True)
+            
+            self.logger.info(f"Completed historical data collection for {symbol}:{exchange}")
+            
+        except Exception as e:
+            log_error(e, context={"action": "collect_historical_data", "symbol": symbol, "exchange": exchange})
+            
+            # Update data collection status with failure
+            try:
+                
+                portfolio_manager = PortfolioManager(self.db)
+                portfolio_manager.update_data_collection_status(symbol, exchange, "historical", False)
+            except:
+                pass
+
     def _collect_financial_data(self, symbol: str, exchange: str, config: Dict[str, Any]) -> None:
         """
         Collect financial data

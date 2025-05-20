@@ -167,6 +167,8 @@ class HistoricalDataCollector:
         
         # Collect data for each timeframe
         results = {}
+        
+        # IMPORTANT: Do NOT iterate over the characters in the timeframe string!
         for timeframe in timeframes:
             try:
                 days_to_collect = timeframe_days.get(timeframe, 30)  # Default to 30 days
@@ -218,23 +220,13 @@ class HistoricalDataCollector:
                 "timeframes_collected": list(results.keys())
             }
             
-            # Try to access the collection in different ways
-            try:
-                if hasattr(self.db, 'insert_one'):
-                    self.db.insert_one("data_collection_logs", collection_record)
-                elif hasattr(self.db, 'data_collection_logs'):
-                    self.db.data_collection_logs.insert_one(collection_record)
-                else:
-                    self.db["data_collection_logs"].insert_one(collection_record)
+            # Insert into data_collection_logs collection
+            self.db.data_collection_logs_collection.insert_one(collection_record)
+            self.logger.info(f"Saved collection results for {symbol}@{exchange}")
                     
-                self.logger.info(f"Saved collection results for {symbol}@{exchange}")
-            except Exception as e:
-                self.logger.error(f"Error saving collection results: {e}")
-                
         except Exception as e:
             self.logger.error(f"Error preparing collection results: {e}")
-
-
+            
     def _collect_intraday_data(self, symbol, exchange, timeframe, start_date, end_date, max_retries):
         """
         Collect intraday historical data in chunks
@@ -269,11 +261,18 @@ class HistoricalDataCollector:
             retry_count = 0
             while retry_count < max_retries:
                 try:
+                    # IMPORTANT: Pass the whole timeframe string directly
+                    # DO NOT loop over the characters in the timeframe
                     data = self.zerodha.get_historical_data(
-                        symbol, exchange, timeframe, adjusted_start, adjusted_end
+                        symbol=symbol, 
+                        exchange=exchange, 
+                        interval_input=timeframe,  # Pass the entire string
+                        from_date=adjusted_start, 
+                        to_date=adjusted_end
                     )
                     
-                    if data:
+                    # Fix: Check if data is not None and is not empty properly for DataFrame
+                    if data is not None and isinstance(data, pd.DataFrame) and not data.empty:
                         # Process and store the data
                         processed_count = self._process_and_store_data(symbol, exchange, timeframe, data)
                         total_records += processed_count
@@ -299,7 +298,7 @@ class HistoricalDataCollector:
         self._calculate_indicators(symbol, exchange, timeframe)
         
         return total_records > 0
-    
+
     def collect_all_timeframes(self, symbol, exchange, days=30):
         """
         Collect data for all standard timeframes for a symbol
@@ -336,11 +335,18 @@ class HistoricalDataCollector:
         
         while retry_count < max_retries:
             try:
+                # IMPORTANT: Pass the whole timeframe string directly
+                # DO NOT loop over the characters in the timeframe
                 data = self.zerodha.get_historical_data(
-                    symbol, exchange, timeframe, start_date, end_date
+                    symbol=symbol, 
+                    exchange=exchange, 
+                    interval_input=timeframe,  # Pass the entire string as one parameter
+                    from_date=start_date, 
+                    to_date=end_date
                 )
                 
-                if data:
+                # Fix: Check if data is not None and is not empty properly for DataFrame
+                if data is not None and isinstance(data, pd.DataFrame) and not data.empty:
                     # Process and store the data
                     processed_count = self._process_and_store_data(symbol, exchange, timeframe, data, is_simulation)
                     total_records = processed_count
@@ -365,7 +371,7 @@ class HistoricalDataCollector:
                 self.logger.error(traceback.format_exc())
         
         return total_records > 0
- 
+
     def save_market_data(self, symbol, timeframe, data):
         """Save market data using time-based partitioning."""
         for record in data:
@@ -393,17 +399,27 @@ class HistoricalDataCollector:
             symbol (str): Instrument symbol
             exchange (str): Exchange code
             timeframe (str): Candle timeframe
-            data (list): Historical data from Zerodha
-            is_simulation (bool): Whether this is simulated data
+            data (DataFrame or list): Historical data
+            is_simulation (bool): Whether running in simulation mode
             
         Returns:
             int: Number of records processed
         """
-        if not data:
+        # Fix: Check if data is not None and is not empty properly for DataFrame
+        if data is None:
+            self.logger.warning(f"No data received for {symbol}@{exchange} ({timeframe})")
             return 0
+            
+        # Convert to DataFrame if it's not already
+        if not isinstance(data, pd.DataFrame):
+            df = pd.DataFrame(data)
+        else:
+            df = data
         
-        # Convert to DataFrame for easier processing
-        df = pd.DataFrame(data)
+        # Check if DataFrame is empty
+        if df.empty:
+            self.logger.warning(f"Empty DataFrame for {symbol}@{exchange} ({timeframe})")
+            return 0
         
         # Handle date/timestamp conversion
         if 'date' in df.columns:
@@ -434,72 +450,36 @@ class HistoricalDataCollector:
         new_records = []
         
         for record in records:
-            # Try different methods to find existing records
-            try:
-                # First try the find_one method if available
-                if hasattr(self.db, 'find_one'):
-                    exists = self.db.find_one("market_data", {
-                        "symbol": symbol,
-                        "exchange": exchange,
-                        "timeframe": timeframe,
-                        "timestamp": record["timestamp"]
-                    })
-                # Fall back to direct collection access if needed
-                elif hasattr(self.db, 'market_data_collection'):
-                    exists = self.db.market_data_collection.find_one({
-                        "symbol": symbol,
-                        "exchange": exchange,
-                        "timeframe": timeframe,
-                        "timestamp": record["timestamp"]
-                    })
-                # Last resort - try accessing as dictionary
-                else:
-                    exists = self.db["market_data"].find_one({
-                        "symbol": symbol,
-                        "exchange": exchange,
-                        "timeframe": timeframe,
-                        "timestamp": record["timestamp"]
-                    })
-            except Exception as e:
-                self.logger.warning(f"Error checking for existing record: {e}")
-                exists = None
+            # Use consistent method to check for existing records
+            exists = self.db.market_data_collection.find_one({
+                "symbol": symbol,
+                "exchange": exchange,
+                "timeframe": timeframe,
+                "timestamp": record["timestamp"]
+            })
             
             if not exists:
                 new_records.append(record)
             else:
                 existing_count += 1
         
-        # Insert new records - trying multiple methods to ensure it works
+        # Insert new records - using consistent method
         insert_count = 0
         if new_records:
             try:
-                # Try method 1: Using insert_many method if available
-                if hasattr(self.db, 'insert_many'):
-                    result = self.db.insert_many("market_data", new_records)
-                    insert_count = len(result) if result else 0
-                # Try method 2: Using direct collection access
-                elif hasattr(self.db, 'market_data_collection'):
-                    result = self.db.market_data_collection.insert_many(new_records)
-                    insert_count = len(result.inserted_ids) if result else 0
-                # Try method 3: Dictionary access
-                else:
-                    result = self.db["market_data"].insert_many(new_records)
-                    insert_count = len(result.inserted_ids) if result else 0
+                # Use consistent database access method
+                result = self.db.market_data_collection.insert_many(new_records)
+                insert_count = len(result.inserted_ids) if result else 0
                 
                 self.logger.info(f"Successfully inserted {insert_count} new {timeframe} records for {symbol}@{exchange}")
             except Exception as e:
                 self.logger.error(f"Error inserting market data: {e}")
                 
-                # Try one-by-one insertion as last resort
+                # Try one-by-one insertion as fallback
                 single_insert_count = 0
                 for record in new_records:
                     try:
-                        if hasattr(self.db, 'insert_one'):
-                            self.db.insert_one("market_data", record)
-                        elif hasattr(self.db, 'market_data_collection'):
-                            self.db.market_data_collection.insert_one(record)
-                        else:
-                            self.db["market_data"].insert_one(record)
+                        self.db.market_data_collection.insert_one(record)
                         single_insert_count += 1
                     except Exception as e2:
                         self.logger.error(f"Error in single record insertion: {e2}")
@@ -554,7 +534,7 @@ class HistoricalDataCollector:
             
         except Exception as e:
             self.logger.error(f"Error calculating indicators: {e}")
-    
+            
     def _compute_indicators(self, df):
         """
         Compute technical indicators for the data
@@ -981,8 +961,13 @@ class HistoricalDataCollector:
             end_date = timestamp + time_delta
             
             try:
+                # IMPORTANT: Pass the whole timeframe string as one parameter
                 data = self.zerodha.get_historical_data(
-                    symbol, exchange, timeframe, start_date, end_date
+                    symbol=symbol, 
+                    exchange=exchange, 
+                    interval_input=timeframe,  # Pass the entire string
+                    from_date=start_date, 
+                    to_date=end_date
                 )
                 
                 if data:
@@ -1063,6 +1048,7 @@ class HistoricalDataCollector:
         return expected_timestamps
     
 # Simple self-test when run directly
+# Main script patch for demonstration
 if __name__ == "__main__":
     import sys
     from database.connection_manager import get_db
@@ -1085,7 +1071,10 @@ if __name__ == "__main__":
     
     # Create collector and collect data
     collector = HistoricalDataCollector(db)
-    results = collector.collect_all_timeframes(symbol, exchange, days)
+    
+    # IMPORTANT: Define timeframes as individual strings, NOT to be iterated over
+    timeframes = ["day", "60min", "15min", "5min", "1min"]
+    results = collector.collect_data(symbol, exchange, timeframes, days)
     
     # Print results
     print(f"\nCollection Results for {symbol}@{exchange}:")

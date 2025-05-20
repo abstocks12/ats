@@ -264,6 +264,7 @@ MONGODB_COLLECTIONS = {
     'reports': 'reports' ,
     'financial_data_raw': 'financial_data_raw',  # Add this line 
     'real_time_data': 'real_time_data',
+    'data_collection_logs':'data_collection_logs'
     # For report storage
     # 'portfolio': 'portfolio',
     # 'market_data': 'market_data',

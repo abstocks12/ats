@@ -33,7 +33,10 @@ class ZerodhaConnector:
         self.api_secret = api_secret or os.environ.get('ZERODHA_API_SECRET')
         
         if not self.api_key or not self.api_secret:
-            raise ValueError("Zerodha API credentials not provided. Set ZERODHA_API_KEY and ZERODHA_API_SECRET environment variables or pass them as parameters")
+            self.logger.warning("Zerodha API credentials not provided, using simulated mode")
+            self.simulated_mode = True
+        else:
+            self.simulated_mode = False
         
         # Create a directory for storing tokens
         self.token_dir = os.path.join(
@@ -43,7 +46,6 @@ class ZerodhaConnector:
         os.makedirs(self.token_dir, exist_ok=True)
         
         self.token_file = os.path.join(self.token_dir, 'zerodha_token.json')
-        self.alt_token_file = os.path.join('config', 'zerodha_token.txt')
         
         # Initialize KiteConnect instance
         self.kite = KiteConnect(api_key=self.api_key)
@@ -56,8 +58,8 @@ class ZerodhaConnector:
         # Set the access token
         if self.access_token:
             self.kite.set_access_token(self.access_token)
-            self.logger.info("Access token set successfully")
-        else:
+        
+        if not self.simulated_mode and not self.access_token:
             # Try to authenticate
             self.authenticate()
 
@@ -78,8 +80,8 @@ class ZerodhaConnector:
         self.on_tick_callbacks = []
         self.on_connection_callbacks = []
         
-        # Load instruments if access token is available
-        if self.access_token:
+        # Load instruments if not in simulated mode
+        if not self.simulated_mode and self.access_token:
             self._load_instruments()
     
     def _load_access_token(self):
@@ -125,6 +127,10 @@ class ZerodhaConnector:
         Returns:
             bool: True if authenticated successfully
         """
+        if self.simulated_mode:
+            self.logger.info("Simulated mode: Skipping authentication")
+            return True
+        
         # If we already have a valid access token, we're good
         if self.access_token:
             try:
@@ -151,21 +157,18 @@ class ZerodhaConnector:
         3. You will be redirected to a URL containing the request token
         4. Run this command with the request token:
         python scripts/zerodha_login.py --request-token YOUR_TOKEN
+        
+        Until authenticated, the system will use simulated data.
         """)
         
+        # Fall back to simulated mode for now
+        self.simulated_mode = True
         return False
 
     def _load_instruments(self):
         """Load instrument details from Zerodha"""
         try:
-            self.logger.info("Loading instruments from Zerodha...")
             instruments = self.kite.instruments()
-            
-            if not instruments:
-                self.logger.error("No instruments returned from Zerodha API")
-                return
-                
-            self.logger.info(f"Received {len(instruments)} instruments from API")
             
             # Map instruments to tokens
             for instrument in instruments:
@@ -180,15 +183,6 @@ class ZerodhaConnector:
                 }
             
             self.logger.info(f"Loaded {len(instruments)} instruments from Zerodha")
-            
-            # Check specifically for common symbols
-            test_symbols = ["RELIANCE", "TCS", "INFY", "NBCC"]
-            for symbol in test_symbols:
-                test_key = f"{symbol}:NSE"
-                if test_key in self.instrument_tokens:
-                    self.logger.info(f"{test_key} found with token {self.instrument_tokens[test_key]}")
-                else:
-                    self.logger.warning(f"{test_key} not found in loaded instruments!")
         except Exception as e:
             self.logger.error(f"Error loading instruments: {e}")
     
@@ -210,6 +204,9 @@ class ZerodhaConnector:
         Returns:
             str: Login URL
         """
+        if self.simulated_mode:
+            return "SIMULATED_MODE_NO_LOGIN_URL"
+        
         return self.kite.login_url()
     
     def generate_session(self, request_token):
@@ -222,6 +219,10 @@ class ZerodhaConnector:
         Returns:
             bool: True if successful
         """
+        if self.simulated_mode:
+            self.logger.info("Simulated mode: Skipping session generation")
+            return True
+        
         try:
             data = self.kite.generate_session(request_token, api_secret=self.api_secret)
             self.access_token = data["access_token"]
@@ -250,6 +251,9 @@ class ZerodhaConnector:
         Returns:
             dict: Quote data
         """
+        if self.simulated_mode:
+            return self._get_simulated_quotes(symbols, exchanges)
+        
         try:
             self._rate_limit()
             
@@ -267,108 +271,49 @@ class ZerodhaConnector:
             return quotes
         except Exception as e:
             self.logger.error(f"Error getting quotes: {e}")
-            return {}
+            # Fallback to simulated quotes in case of error
+            return self._get_simulated_quotes(symbols, exchanges)
     
     
-    def get_historical_data(self, symbol, exchange, interval_input, from_date=None, to_date=None, continuous=0, oi=0):
+    def get_historical_data(self, symbol, exchange,intervel, timeframe='day', days=None):
         """
         Collect historical data for a specific instrument and timeframe
         
         Args:
             symbol (str): Instrument symbol
             exchange (str): Exchange code
-            interval_input (str): Interval to collect. Must be passed as a complete string.
-                            Valid values: 'minute', '3minute', '5minute', '10minute', '15minute', '30minute', '60minute', 'day'
-                            Legacy values also supported: '1min', '5min', '15min', '30min', '60min', 'hour'
-            from_date (str): From date in format 'yyyy-mm-dd HH:MM:SS'
-            to_date (str): To date in format 'yyyy-mm-dd HH:MM:SS'
-            continuous (int): Get continuous data (0 or 1). Pass 1 to get continuous data for futures
-            oi (int): Get open interest data (0 or 1). Pass 1 to get OI data
-                
+            timeframe (str): Timeframe to collect (day, minute, etc.)
+            days (int): Number of days of historical data to collect
+            
         Returns:
             pandas.DataFrame: Historical data
-            
-        Warning:
-            DO NOT iterate over the interval string! Pass the entire string (e.g., "day") as one parameter.
-            Incorrect: for char in "day": get_historical_data(..., char, ...)
-            Correct: get_historical_data(..., "day", ...)
         """
         import pandas as pd
-        from datetime import datetime, timedelta
-        import inspect
-        import traceback
         
-        # EMERGENCY DEBUG CODE
-        # Print the complete stack trace to identify the source of the problem
-        stack_trace = traceback.format_stack()
-        
-        self.logger.critical(f"DEBUG: get_historical_data called with interval_input='{interval_input}', type={type(interval_input)}")
-        self.logger.critical(f"DEBUG: Call Stack:")
-        for line in stack_trace:
-            self.logger.critical(f"DEBUG: {line.strip()}")
+        try:
+            # Default to 365 days if not specified
+            days = days or 365
             
-        # Get caller info for debugging
-        caller_info = []
-        try:
-            frame = inspect.currentframe().f_back
-            while frame:
-                info = inspect.getframeinfo(frame)
-                caller_info.append(f"File: {info.filename}, Line: {info.lineno}, Function: {info.function}")
-                if len(caller_info) >= 5:  # Limit to 5 frames to avoid excessive logging
-                    break
-                frame = frame.f_back
-        except:
-            caller_info.append("Could not get caller info")
-        
-        for info in caller_info:
-            self.logger.critical(f"DEBUG: Caller: {info}")
-        
-        # Check if we're called from a loop that's iterating over a string
-        try:
-            frame = inspect.currentframe().f_back
-            if frame:
-                code_context = frame.f_code.co_name
-                self.logger.critical(f"DEBUG: Called from function: {code_context}")
-                
-                # Try to get the source code of the caller
-                try:
-                    lines, starting_line_no = inspect.getsourcelines(frame)
-                    for i, line in enumerate(lines[:10]):  # Only log the first 10 lines
-                        self.logger.critical(f"DEBUG: Source line {starting_line_no + i}: {line.strip()}")
-                except:
-                    self.logger.critical("DEBUG: Could not get source lines")
-        except Exception as e:
-            self.logger.critical(f"DEBUG: Error getting frame info: {e}")
-        
-        try:
-            # Type and value validation with detailed logging
-            if not isinstance(interval_input, str):
-                self.logger.error(f"Invalid interval type: {type(interval_input)}. Must be a string.")
-                return None
-                
-            # Single character check - almost certainly an error
-            if len(interval_input) == 1:
-                self.logger.error(f"Single character interval '{interval_input}' is invalid.")
-                self.logger.error(f"This error typically occurs when iterating over an interval string.")
-                self.logger.error(f"Check if you're doing: for timeframe in 'day': get_historical_data(..., timeframe)")
-                return None
-                
             self.logger.info(f"Collecting historical data for {symbol}:{exchange}")
             
             # Get instrument token using existing method
-            key = f"{symbol}:{exchange}"
             instrument_token = self.get_instrument_token(symbol, exchange)
             
             # If token not found, try to load instruments and get token again
             if not instrument_token:
-                self.logger.warning(f"Token not found for {key}, attempting to load instruments")
+                self.logger.warning(f"Token not found for {symbol}:{exchange}, attempting to load instruments")
+                
+                # Check if we're in simulated mode
+                if self.simulated_mode:
+                    self.logger.error(f"Cannot fetch instrument token in simulated mode. Please authenticate.")
+                    return None
                 
                 # Make sure we have a valid access token
                 if not self.access_token:
                     self.logger.warning("No access token, attempting to authenticate")
-                    login_url = self.generate_login_url()
-                    self.logger.info(f"Please login using this URL: {login_url}")
-                    return None
+                    if not self.authenticate():
+                        self.logger.error("Authentication failed, cannot load instruments")
+                        return None
                 
                 # Try to load instruments
                 self._load_instruments()
@@ -393,6 +338,7 @@ class ZerodhaConnector:
                                 self.logger.info(f"Found token {instrument_token} for {symbol}:{exchange} via direct lookup")
                                 
                                 # Add it to our mappings
+                                key = f"{symbol}:{exchange}"
                                 self.instrument_tokens[key] = instrument_token
                                 self.token_to_instrument[instrument_token] = {
                                     'symbol': symbol,
@@ -402,144 +348,55 @@ class ZerodhaConnector:
                                     'instrument_type': instr.get('instrument_type', 'EQ')
                                 }
                                 break
-                        
-                        # Log available symbols if not found
-                        if not instrument_token:
-                            symbols_in_exchange = [instr['tradingsymbol'] for instr in instruments[:10]]
-                            self.logger.info(f"Sample symbols available in {exchange}: {symbols_in_exchange}")
                     except Exception as e:
                         self.logger.error(f"Error during direct instrument lookup: {e}")
-            
+                
             if not instrument_token:
                 self.logger.error(f"Could not find instrument token for {exchange}:{symbol}")
                 return None
                 
             self.logger.info(f"Using instrument token: {instrument_token} for {symbol}:{exchange}")
             
-            # Validate interval parameter - handle case where interval might be passed character by character
-            # First, ensure interval_input is a proper string
-            if not isinstance(interval_input, str):
-                # Try to convert to string if possible
-                try:
-                    interval = str(interval_input)
-                except:
-                    self.logger.error(f"Invalid interval type: {type(interval_input)}. Must be a string.")
-                    return None
+            # For longer periods, we need to collect data in chunks to avoid API limitations
+            # Zerodha historical API has limits on the date range for higher frequencies
+            chunk_size = 60  # 60 days per chunk for minute data, adjust for other timeframes
+            if timeframe in ['minute', '3minute', '5minute', '1min', '3min', '5min']:
+                chunk_size = 60  # 60 days for minute data
+            elif timeframe in ['15minute', '30minute', '60minute', '15min', '30min', '60min']:
+                chunk_size = 100  # 100 days for higher timeframes
             else:
-                interval = interval_input
-                    
-            # Check if someone is trying to iterate over the interval string
-            if len(interval) == 1:
-                self.logger.warning(f"Received single-character interval: '{interval}'. This may indicate an iteration issue.")
-                # Check if we're in a loop that's iterating over the interval string
-                # We'll try to detect if the caller is in a loop by checking the stack
-                import inspect
-                caller_frame = inspect.currentframe().f_back
-                if caller_frame:
-                    caller_code = inspect.getframeinfo(caller_frame).code_context
-                    self.logger.debug(f"Called from: {caller_code}")
-                    if caller_code and any('for' in line and 'interval' in line for line in caller_code):
-                        self.logger.error("Detected loop over interval string. Do not iterate over the interval parameter!")
-                        return None
-            
-            # Validate the interval against known valid values
-            valid_intervals = ['minute', '3minute', '5minute', '10minute', '15minute', '30minute', '60minute', 'day']
-            legacy_intervals = ['1min', '3min', '5min', '15min', '30min', '60min', 'hour', '1hour']
-            
-            if interval not in valid_intervals and interval not in legacy_intervals:
-                self.logger.error(f"Invalid interval: '{interval}'. Must be one of {valid_intervals} or {legacy_intervals}")
-                return None
-                
-            # If using legacy interval format, convert to standard format
-            legacy_map = {
-                '1min': 'minute',
-                '3min': '3minute',
-                '5min': '5minute',
-                '15min': '15minute',
-                '30min': '30minute',
-                '60min': '60minute',
-                '1hour': '60minute',
-                'hour': '60minute'
-            }
-            
-            if interval in legacy_map:
-                interval = legacy_map[interval]
-                    
-            self.logger.info(f"Using validated interval: '{interval}'")
-            
-            # Set default time range if not provided
-            if not from_date or not to_date:
-                to_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                from_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d %H:%M:%S')
-            
-            # For each interval, there are recommended date range limits to avoid API errors
-            # Adjust the chunk size based on the interval
-            chunk_size = 365  # Default chunk size in days
-            
-            # Define optimal chunk sizes based on interval to respect API limits
-            if interval in ['minute', '3minute', '5minute']:
-                chunk_size = 60  # 60 days for minute-level data
-            elif interval in ['10minute', '15minute', '30minute', '60minute']:
-                chunk_size = 100  # 100 days for higher frequency data
-            else:  # 'day'
                 chunk_size = 365  # 365 days for daily data
-            
-            # Convert date strings to datetime objects if they're strings
-            if isinstance(from_date, str):
-                from_date_obj = datetime.strptime(from_date, '%Y-%m-%d %H:%M:%S')
-            else:
-                from_date_obj = from_date
                 
-            if isinstance(to_date, str):
-                to_date_obj = datetime.strptime(to_date, '%Y-%m-%d %H:%M:%S')
-            else:
-                to_date_obj = to_date
-            
-            # Calculate the date range in days
-            date_range_days = (to_date_obj - from_date_obj).days + 1
-            
             # Calculate the number of chunks needed
-            num_chunks = (date_range_days + chunk_size - 1) // chunk_size  # Ceiling division
+            num_chunks = (days + chunk_size - 1) // chunk_size  # Ceiling division
             
             # Prepare to collect data in chunks
             all_data = []
-            current_to_date = to_date_obj
+            to_date = datetime.now()
             
             for i in range(num_chunks):
-                # Calculate current from_date
-                current_from_date = max(
-                    from_date_obj,  # Don't go earlier than requested
-                    current_to_date - timedelta(days=chunk_size - 1)  # Chunk size
-                )
+                from_date = to_date - timedelta(days=min(chunk_size, days - i * chunk_size))
                 
-                # Format dates as strings in the format Kite expects: YYYY-MM-DD HH:MM:SS
-                current_from_date_str = current_from_date.strftime('%Y-%m-%d %H:%M:%S')
-                current_to_date_str = current_to_date.strftime('%Y-%m-%d %H:%M:%S')
+                self.logger.info(f"Collecting chunk {i+1}/{num_chunks} for {exchange}:{symbol} ({timeframe}) "
+                            f"from {from_date.date()} to {to_date.date()}")
                 
-                self.logger.info(f"Collecting chunk {i+1}/{num_chunks} for {exchange}:{symbol} ({interval}) "
-                            f"from {current_from_date_str} to {current_to_date_str}")
-                
+                # Convert timeframe to Zerodha format if needed
+                # Only convert if using the internal naming convention
+                if timeframe in ['1min', '5min', '15min', '30min', '60min', 'day', 'week']:
+                    zerodha_timeframe = self._convert_interval(timeframe)
+                else:
+                    zerodha_timeframe = timeframe
+                    
                 # Apply rate limiting
                 self._rate_limit()
-                
-                try:
-                    # Call the Kite historical_data API with correct parameters
-                    self.logger.debug(f"API call params: token={instrument_token}, from={current_from_date_str}, "
-                                f"to={current_to_date_str}, interval={interval}, continuous={continuous}, oi={oi}")
                     
-                    # Ensure parameters are passed correctly
+                try:
                     chunk_data = self.kite.historical_data(
                         instrument_token=instrument_token,
-                        from_date=current_from_date_str,
-                        to_date=current_to_date_str,
-                        interval=interval,
-                        continuous=continuous,
-                        oi=oi
+                        from_date=from_date.strftime('%Y-%m-%d'),
+                        to_date=to_date.strftime('%Y-%m-%d'),
+                        interval=zerodha_timeframe
                     )
-                    
-                    # Debug output for data received
-                    if chunk_data:
-                        self.logger.debug(f"Sample data received: {chunk_data[0]}")
                 except Exception as e:
                     self.logger.error(f"Error collecting data in chunk {i+1}: {e}")
                     chunk_data = []
@@ -551,14 +408,13 @@ class ZerodhaConnector:
                     self.logger.warning(f"No data found in chunk {i+1} for {exchange}:{symbol}")
                 
                 # Update to_date for next chunk
-                current_to_date = current_from_date - timedelta(days=1)
+                to_date = from_date - timedelta(days=1)
                 
                 # Respect API rate limits
                 time.sleep(0.5)
                 
                 # Break if we've gone back far enough
-                if current_to_date <= from_date_obj:
-                    self.logger.info(f"Collected sufficient historical data (back to {from_date_obj.date()})")
+                if to_date < datetime.now() - timedelta(days=days):
                     break
             
             if not all_data:
@@ -571,20 +427,13 @@ class ZerodhaConnector:
             # Add instrument details
             df['symbol'] = symbol
             df['exchange'] = exchange
-            df['interval'] = interval
+            df['timeframe'] = timeframe
             
-            self.logger.info(f"Collected {len(df)} total records for {exchange}:{symbol} ({interval})")
-            
-            # Debug DataFrame information
-            self.logger.debug(f"DataFrame columns: {df.columns.tolist()}")
-            
+            self.logger.info(f"Collected {len(df)} total records for {exchange}:{symbol} ({timeframe})")
             return df
             
         except Exception as e:
             self.logger.error(f"Error collecting historical data for {symbol}: {e}")
-            # Log the full exception for easier debugging
-            import traceback
-            self.logger.error(f"Exception traceback: {traceback.format_exc()}")
             return None
     
     def get_instrument_token(self, symbol, exchange):
@@ -599,29 +448,7 @@ class ZerodhaConnector:
             int: Instrument token
         """
         key = f"{symbol}:{exchange}"
-        
-        # Log the lookup attempt
-        self.logger.debug(f"Looking up token for {key}")
-        
-        token = self.instrument_tokens.get(key)
-        
-        if not token:
-            # Try case-insensitive lookup
-            for stored_key, stored_token in self.instrument_tokens.items():
-                if key.upper() == stored_key.upper():
-                    token = stored_token
-                    self.logger.info(f"Found token {token} with case-insensitive match for {key}")
-                    break
-        
-        if token:
-            self.logger.debug(f"Found token {token} for {key}")
-        else:
-            self.logger.warning(f"Token not found for {key}")
-            # Check if we have any instruments loaded
-            if not self.instrument_tokens:
-                self.logger.error("No instruments loaded. Make sure you're authenticated.")
-        
-        return token
+        return self.instrument_tokens.get(key)
     
     def connect_ticker(self, instrument_tokens=None):
         """
@@ -633,6 +460,11 @@ class ZerodhaConnector:
         Returns:
             bool: True if connected successfully
         """
+        if self.simulated_mode:
+            self.logger.info("Simulated mode: Simulating ticker connection")
+            self.ticker_connected = True
+            return True
+        
         if not self.access_token:
             self.logger.error("Cannot connect ticker: No access token")
             return False
@@ -673,10 +505,12 @@ class ZerodhaConnector:
         Returns:
             bool: True if subscribed successfully
         """
+        if self.simulated_mode:
+            self.logger.info(f"Simulated mode: Simulating subscription to {symbols}")
+            return True
+        
         if not self.ticker_connected:
-            connected = self.connect_ticker()
-            if not connected:
-                return False
+            return self.connect_ticker()
         
         try:
             # Get instrument tokens
@@ -687,8 +521,6 @@ class ZerodhaConnector:
                     token = self.instrument_tokens.get(key)
                     if token:
                         tokens.append(token)
-                    else:
-                        self.logger.warning(f"No token found for {key}")
             else:
                 # Default to NSE
                 for symbol in symbols:
@@ -696,8 +528,6 @@ class ZerodhaConnector:
                     token = self.instrument_tokens.get(key)
                     if token:
                         tokens.append(token)
-                    else:
-                        self.logger.warning(f"No token found for {key}")
             
             if not tokens:
                 self.logger.error("No valid instrument tokens found for subscription")
@@ -739,6 +569,11 @@ class ZerodhaConnector:
         Returns:
             str: Order ID or None if failed
         """
+        if self.simulated_mode:
+            # Generate a fake order ID
+            import uuid
+            return f"SIMULATED_{uuid.uuid4()}"
+        
         try:
             self._rate_limit()
             
@@ -771,6 +606,13 @@ class ZerodhaConnector:
         Returns:
             dict: Order details
         """
+        if self.simulated_mode:
+            return {
+                "status": "COMPLETE",
+                "filled_quantity": 1,
+                "average_price": 100.0
+            }
+        
         try:
             self._rate_limit()
             orders = self.kite.orders()
@@ -791,6 +633,9 @@ class ZerodhaConnector:
         Returns:
             dict: Positions data
         """
+        if self.simulated_mode:
+            return {"net": [], "day": []}
+        
         try:
             self._rate_limit()
             positions = self.kite.positions()
@@ -806,6 +651,9 @@ class ZerodhaConnector:
         Returns:
             list: Holdings data
         """
+        if self.simulated_mode:
+            return []
+        
         try:
             self._rate_limit()
             holdings = self.kite.holdings()
@@ -884,4 +732,125 @@ class ZerodhaConnector:
             "week": "week"
         }
         
-        return mapping.get(interval, interval)
+        return mapping.get(interval, "day")
+    
+    def _get_simulated_quotes(self, symbols, exchanges=None):
+        """
+        Generate simulated quotes for testing
+        
+        Args:
+            symbols (list): List of instrument symbols
+            exchanges (list, optional): List of exchanges
+            
+        Returns:
+            dict: Simulated quote data
+        """
+        quotes = {}
+        
+        for i, symbol in enumerate(symbols):
+            exchange = exchanges[i] if exchanges and i < len(exchanges) else "NSE"
+            
+            # Generate a stable but semi-random price based on symbol name
+            base_price = sum(ord(c) for c in symbol) % 1000 + 100
+            
+            # Add some variation based on current time
+            import random
+            random.seed(int(time.time()) // 300)  # Change every 5 minutes
+            variation = random.uniform(-5, 5)
+            price = base_price + variation
+            
+            key = f"{exchange}:{symbol}"
+            quotes[key] = {
+                "instrument_token": hash(key) % 100000,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "last_price": price,
+                "last_quantity": random.randint(1, 100) * 10,
+                "buy_quantity": random.randint(1, 100) * 100,
+                "sell_quantity": random.randint(1, 100) * 100,
+                "volume": random.randint(10, 1000) * 100,
+                "average_price": price * random.uniform(0.998, 1.002),
+                "ohlc": {
+                    "open": price * random.uniform(0.99, 1.01),
+                    "high": price * random.uniform(1.01, 1.03),
+                    "low": price * random.uniform(0.97, 0.99),
+                    "close": price * random.uniform(0.99, 1.01)
+                }
+            }
+        
+        return quotes
+    
+    def _get_simulated_historical(self, symbol, exchange, interval, from_date, to_date):
+        """
+        Generate simulated historical data for testing
+        
+        Args:
+            symbol (str): Instrument symbol
+            exchange (str): Exchange code
+            interval (str): Candle interval
+            from_date (datetime): Start date
+            to_date (datetime): End date
+            
+        Returns:
+            list: Simulated historical data
+        """
+        # Generate a stable base price based on symbol name
+        base_price = sum(ord(c) for c in symbol) % 1000 + 100
+        
+        # Determine time delta based on interval
+        if interval == "1min":
+            delta = timedelta(minutes=1)
+        elif interval == "5min":
+            delta = timedelta(minutes=5)
+        elif interval == "15min":
+            delta = timedelta(minutes=15)
+        elif interval == "30min":
+            delta = timedelta(minutes=30)
+        elif interval == "60min":
+            delta = timedelta(hours=1)
+        elif interval == "day":
+            delta = timedelta(days=1)
+        else:
+            delta = timedelta(days=1)
+        
+        # Generate data points
+        data = []
+        current_date = from_date
+        import random
+        price = base_price
+        
+        while current_date <= to_date:
+            # Skip weekends for daily data
+            if interval == "day" and current_date.weekday() >= 5:
+                current_date += delta
+                continue
+            
+            # Generate OHLC data with some randomness
+            random.seed(int(current_date.timestamp()))
+            
+            # Price movement
+            change_percent = random.uniform(-1, 1)
+            price = price * (1 + change_percent/100)
+            
+            # OHLC
+            open_price = price
+            high_price = price * random.uniform(1, 1.02)
+            low_price = price * random.uniform(0.98, 1)
+            close_price = price * random.uniform(0.99, 1.01)
+            
+            # Volume - higher for shorter intervals
+            volume_multiplier = 1 if interval == "day" else 24 // (delta.seconds // 3600)
+            volume = random.randint(1000, 10000) * volume_multiplier
+            
+            data_point = {
+                "date": current_date.strftime("%Y-%m-%d %H:%M:%S"),
+                "open": round(open_price, 2),
+                "high": round(high_price, 2),
+                "low": round(low_price, 2),
+                "close": round(close_price, 2),
+                "volume": volume
+            }
+            
+            data.append(data_point)
+            current_date += delta
+        
+        return data

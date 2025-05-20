@@ -1,0 +1,120 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+virtualenv/
+.venv/
+.env/
+.env
+
+# IDE specific files
+.idea/
+.vscode/
+*.sublime-workspace
+*.sublime-project
+.spyderproject
+.spyproject
+.ropeproject
+.pyre/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Distribution / packaging
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Trading system specific
+auth_tokens/
+logs/
+backups/
+*.log
+*.csv
+*.xlsx
+*.json
+!requirements.json
+!config/*.json
+!example_data/*.csv
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+mongodb_data/
+
+# Zerodha specific
+zerodha_token.json
+zerodha_token.txt
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Credentials and sensitive information
+*.env
+credentials/
+secrets/
+config/credentials.json
+config/api_keys.json
+
+# Test data and temporary files
+temp/
+test_data/
+test_output/
+tmp/
+
+# Documentation builds
+docs/_build/
+docs/site/
+
+# Cache directories
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/

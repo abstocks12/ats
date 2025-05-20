@@ -28,34 +28,213 @@ class HistoricalDataCollector:
         self.zerodha = ZerodhaConnector()
         self.partitioner = db_connector.get_partitioner()
     
-    def collect_data(self, symbol, exchange, timeframe="day", days=365, end_date=None, max_retries=3):
+    def _collect_simulated_data(self, symbol, exchange, timeframe, start_date, end_date):
         """
-        Collect historical data for an instrument
+        Collect simulated historical data when Zerodha authentication is not available
         
         Args:
             symbol (str): Instrument symbol
             exchange (str): Exchange code
-            timeframe (str): Candle timeframe (default: day)
+            timeframe (str): Candle timeframe
+            start_date (datetime): Start date
+            end_date (datetime): End date
+            
+        Returns:
+            bool: True if successful
+        """
+        self.logger.info(f"Generating simulated {timeframe} data for {symbol}@{exchange}")
+        
+        try:
+            # Get simulated data directly
+            data = self.zerodha.get_historical_data(
+                symbol, exchange, timeframe, start_date, end_date
+            )
+            
+            if not data:
+                self.logger.warning(f"No simulated data generated for {symbol}@{exchange}")
+                return False
+            
+            self.logger.info(f"Generated {len(data)} simulated {timeframe} data points")
+            
+            # Process and store the data, but skip indicator calculation for simulation
+            processed_count = 0
+            if data:
+                # Convert to DataFrame for easier processing
+                df = pd.DataFrame(data)
+                
+                # Handle date/timestamp conversion
+                if 'date' in df.columns:
+                    if isinstance(df['date'].iloc[0], str):
+                        df['timestamp'] = pd.to_datetime(df['date'])
+                    else:
+                        df['timestamp'] = df['date']
+                
+                # Prepare data for MongoDB - simplified version without indicators
+                records = []
+                for _, row in df.iterrows():
+                    record = {
+                        "symbol": symbol,
+                        "exchange": exchange,
+                        "timeframe": timeframe,
+                        "timestamp": row['timestamp'] if 'timestamp' in row else pd.to_datetime(row['date']),
+                        "open": float(row['open']),
+                        "high": float(row['high']),
+                        "low": float(row['low']),
+                        "close": float(row['close']),
+                        "volume": int(row['volume']),
+                        "simulated": True  # Mark as simulated data
+                    }
+                    records.append(record)
+                
+                # Insert new records
+                if records:
+                    try:
+                        if hasattr(self.db, 'insert_many'):
+                            result = self.db.insert_many("market_data", records)
+                            processed_count = len(result) if result else 0
+                        elif hasattr(self.db, 'market_data_collection'):
+                            result = self.db.market_data_collection.insert_many(records)
+                            processed_count = len(result.inserted_ids) if result else 0
+                        else:
+                            result = self.db["market_data"].insert_many(records)
+                            processed_count = len(result.inserted_ids) if result else 0
+                    except Exception as e:
+                        self.logger.error(f"Error inserting simulated market data: {e}")
+                        # Try one-by-one insertion as last resort
+                        single_insert_count = 0
+                        for record in records:
+                            try:
+                                if hasattr(self.db, 'insert_one'):
+                                    self.db.insert_one("market_data", record)
+                                elif hasattr(self.db, 'market_data_collection'):
+                                    self.db.market_data_collection.insert_one(record)
+                                else:
+                                    self.db["market_data"].insert_one(record)
+                                single_insert_count += 1
+                            except Exception as e2:
+                                self.logger.error(f"Error in single record insertion: {e2}")
+                        
+                        processed_count = single_insert_count
+                
+                self.logger.info(f"Processed {processed_count} simulated {timeframe} records for {symbol}@{exchange}")
+            
+            return processed_count > 0
+        
+        except Exception as e:
+            self.logger.error(f"Error in simulation mode: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return False
+    
+    def collect_data(self, symbol, exchange, timeframes=None, days=365, end_date=None, max_retries=3):
+        """
+        Collect historical data for an instrument at multiple timeframes
+        
+        Args:
+            symbol (str): Instrument symbol
+            exchange (str): Exchange code
+            timeframes (list): List of candle timeframes (default: ["day", "60min", "15min", "5min", "1min"])
             days (int): Number of days to collect (default: 365)
             end_date (datetime, optional): End date (default: today)
             max_retries (int): Maximum number of retries for API errors
             
         Returns:
-            bool: True if successful
+            dict: Results by timeframe
         """
-        self.logger.info(f"Collecting {timeframe} historical data for {symbol}@{exchange} for the last {days} days")
+        # Default timeframes if not specified
+        if timeframes is None:
+            timeframes = ["day", "60min", "15min", "5min", "1min"]
+        
+        self.logger.info(f"Collecting historical data for {symbol}@{exchange} at timeframes: {timeframes}")
         
         # Determine date range
         end_date = end_date or datetime.now()
-        start_date = end_date - timedelta(days=days)
         
-        # For intraday data, we need to make multiple requests due to API limitations
-        if timeframe in ["1min", "5min", "15min", "30min", "60min"]:
-            return self._collect_intraday_data(symbol, exchange, timeframe, start_date, end_date, max_retries)
-        else:
-            # For daily/weekly data, we can make a single request
-            return self._collect_daily_data(symbol, exchange, timeframe, start_date, end_date, max_retries)
-    
+        # Days to collect for each timeframe (to avoid excessive data)
+        timeframe_days = {
+            "day": days,
+            "60min": min(days, 90),  # 3 months for hourly
+            "30min": min(days, 60),  # 2 months for 30min
+            "15min": min(days, 30),  # 1 month for 15min
+            "5min": min(days, 15),   # 15 days for 5min
+            "1min": min(days, 7)     # 7 days for 1min
+        }
+        
+        # Check if Zerodha is in simulation mode
+        is_simulation = hasattr(self.zerodha, 'is_authenticated') and not self.zerodha.is_authenticated()
+        if is_simulation:
+            self.logger.warning("Zerodha is in simulation mode. Will use simulated data.")
+        
+        # Collect data for each timeframe
+        results = {}
+        for timeframe in timeframes:
+            try:
+                days_to_collect = timeframe_days.get(timeframe, 30)  # Default to 30 days
+                start_date = end_date - timedelta(days=days_to_collect)
+                
+                self.logger.info(f"Collecting {timeframe} data for {symbol}@{exchange} - {days_to_collect} days")
+                
+                # For intraday data (less than daily)
+                if timeframe in ["1min", "5min", "15min", "30min", "60min"]:
+                    result = self._collect_intraday_data(symbol, exchange, timeframe, start_date, end_date, max_retries)
+                else:
+                    # For daily/weekly data
+                    result = self._collect_daily_data(symbol, exchange, timeframe, start_date, end_date, max_retries)
+                
+                results[timeframe] = result
+                
+            except Exception as e:
+                self.logger.error(f"Error collecting {timeframe} data for {symbol}@{exchange}: {e}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+                results[timeframe] = False
+        
+        # Save collection results to database for tracking
+        try:
+            self._save_collection_results(symbol, exchange, results)
+        except Exception as e:
+            self.logger.error(f"Error in _save_collection_results: {e}")
+        
+        return results
+
+    def _save_collection_results(self, symbol, exchange, results):
+        """
+        Save data collection results to database for tracking and monitoring
+        
+        Args:
+            symbol (str): Instrument symbol
+            exchange (str): Exchange code
+            results (dict): Collection results by timeframe
+        """
+        try:
+            # Create a results record
+            collection_record = {
+                "symbol": symbol,
+                "exchange": exchange,
+                "collection_time": datetime.now(),
+                "results": {k: bool(v) for k, v in results.items()},  # Convert to bool values for JSON serialization
+                "success_count": sum(1 for result in results.values() if result),
+                "failure_count": sum(1 for result in results.values() if not result),
+                "timeframes_collected": list(results.keys())
+            }
+            
+            # Try to access the collection in different ways
+            try:
+                if hasattr(self.db, 'insert_one'):
+                    self.db.insert_one("data_collection_logs", collection_record)
+                elif hasattr(self.db, 'data_collection_logs'):
+                    self.db.data_collection_logs.insert_one(collection_record)
+                else:
+                    self.db["data_collection_logs"].insert_one(collection_record)
+                    
+                self.logger.info(f"Saved collection results for {symbol}@{exchange}")
+            except Exception as e:
+                self.logger.error(f"Error saving collection results: {e}")
+                
+        except Exception as e:
+            self.logger.error(f"Error preparing collection results: {e}")
+
+
     def _collect_intraday_data(self, symbol, exchange, timeframe, start_date, end_date, max_retries):
         """
         Collect intraday historical data in chunks
@@ -121,7 +300,22 @@ class HistoricalDataCollector:
         
         return total_records > 0
     
-    def _collect_daily_data(self, symbol, exchange, timeframe, start_date, end_date, max_retries):
+    def collect_all_timeframes(self, symbol, exchange, days=30):
+        """
+        Collect data for all standard timeframes for a symbol
+        
+        Args:
+            symbol (str): Instrument symbol
+            exchange (str): Exchange code
+            days (int): Number of days to collect
+            
+        Returns:
+            dict: Results by timeframe
+        """
+        timeframes = ["day", "60min", "15min", "5min", "1min"]
+        return self.collect_data(symbol, exchange, timeframes, days)
+
+    def _collect_daily_data(self, symbol, exchange, timeframe, start_date, end_date, max_retries, is_simulation=False):
         """
         Collect daily historical data
         
@@ -132,6 +326,7 @@ class HistoricalDataCollector:
             start_date (datetime): Start date
             end_date (datetime): End date
             max_retries (int): Maximum number of retries for API errors
+            is_simulation (bool): Whether running in simulation mode
             
         Returns:
             bool: True if successful
@@ -147,7 +342,7 @@ class HistoricalDataCollector:
                 
                 if data:
                     # Process and store the data
-                    processed_count = self._process_and_store_data(symbol, exchange, timeframe, data)
+                    processed_count = self._process_and_store_data(symbol, exchange, timeframe, data, is_simulation)
                     total_records = processed_count
                 
                 # Break out of retry loop on success
@@ -160,11 +355,17 @@ class HistoricalDataCollector:
         
         self.logger.info(f"Collected {total_records} {timeframe} data points for {symbol}@{exchange}")
         
-        # Calculate technical indicators for the newly collected data
-        self._calculate_indicators(symbol, exchange, timeframe)
+        # Calculate technical indicators only if not in simulation mode
+        if total_records > 0 and not is_simulation:
+            try:
+                self._calculate_indicators(symbol, exchange, timeframe)
+            except Exception as e:
+                self.logger.error(f"Error calculating indicators: {e}")
+                import traceback
+                self.logger.error(traceback.format_exc())
         
         return total_records > 0
-    
+ 
     def save_market_data(self, symbol, timeframe, data):
         """Save market data using time-based partitioning."""
         for record in data:
@@ -184,7 +385,7 @@ class HistoricalDataCollector:
             except Exception as e:
                 self.logger.error(f"Error saving data to {partition_name}: {e}")
                 
-    def _process_and_store_data(self, symbol, exchange, timeframe, data):
+    def _process_and_store_data(self, symbol, exchange, timeframe, data, is_simulation=False):
         """
         Process and store historical data
         
@@ -193,6 +394,7 @@ class HistoricalDataCollector:
             exchange (str): Exchange code
             timeframe (str): Candle timeframe
             data (list): Historical data from Zerodha
+            is_simulation (bool): Whether this is simulated data
             
         Returns:
             int: Number of records processed
@@ -217,12 +419,13 @@ class HistoricalDataCollector:
                 "symbol": symbol,
                 "exchange": exchange,
                 "timeframe": timeframe,
-                "timestamp": row['timestamp'],
+                "timestamp": row['timestamp'] if 'timestamp' in row else pd.to_datetime(row['date']),
                 "open": float(row['open']),
                 "high": float(row['high']),
                 "low": float(row['low']),
                 "close": float(row['close']),
-                "volume": int(row['volume'])
+                "volume": int(row['volume']),
+                "simulated": is_simulation  # Mark as simulated data
             }
             records.append(record)
         
@@ -231,29 +434,84 @@ class HistoricalDataCollector:
         new_records = []
         
         for record in records:
-            exists = self.db.market_data_collection.find_one({
-                "symbol": symbol,
-                "exchange": exchange,
-                "timeframe": timeframe,
-                "timestamp": record["timestamp"]
-            })
+            # Try different methods to find existing records
+            try:
+                # First try the find_one method if available
+                if hasattr(self.db, 'find_one'):
+                    exists = self.db.find_one("market_data", {
+                        "symbol": symbol,
+                        "exchange": exchange,
+                        "timeframe": timeframe,
+                        "timestamp": record["timestamp"]
+                    })
+                # Fall back to direct collection access if needed
+                elif hasattr(self.db, 'market_data_collection'):
+                    exists = self.db.market_data_collection.find_one({
+                        "symbol": symbol,
+                        "exchange": exchange,
+                        "timeframe": timeframe,
+                        "timestamp": record["timestamp"]
+                    })
+                # Last resort - try accessing as dictionary
+                else:
+                    exists = self.db["market_data"].find_one({
+                        "symbol": symbol,
+                        "exchange": exchange,
+                        "timeframe": timeframe,
+                        "timestamp": record["timestamp"]
+                    })
+            except Exception as e:
+                self.logger.warning(f"Error checking for existing record: {e}")
+                exists = None
             
             if not exists:
                 new_records.append(record)
             else:
                 existing_count += 1
         
-        # Insert new records
+        # Insert new records - trying multiple methods to ensure it works
+        insert_count = 0
         if new_records:
-            result = self.db.market_data_collection.insert_many(new_records)
-            insert_count = len(result.inserted_ids)
-            self.logger.debug(f"Inserted {insert_count} new records (skipped {existing_count} existing records)")
-        else:
-            insert_count = 0
-            self.logger.debug(f"No new records to insert (skipped {existing_count} existing records)")
+            try:
+                # Try method 1: Using insert_many method if available
+                if hasattr(self.db, 'insert_many'):
+                    result = self.db.insert_many("market_data", new_records)
+                    insert_count = len(result) if result else 0
+                # Try method 2: Using direct collection access
+                elif hasattr(self.db, 'market_data_collection'):
+                    result = self.db.market_data_collection.insert_many(new_records)
+                    insert_count = len(result.inserted_ids) if result else 0
+                # Try method 3: Dictionary access
+                else:
+                    result = self.db["market_data"].insert_many(new_records)
+                    insert_count = len(result.inserted_ids) if result else 0
+                
+                self.logger.info(f"Successfully inserted {insert_count} new {timeframe} records for {symbol}@{exchange}")
+            except Exception as e:
+                self.logger.error(f"Error inserting market data: {e}")
+                
+                # Try one-by-one insertion as last resort
+                single_insert_count = 0
+                for record in new_records:
+                    try:
+                        if hasattr(self.db, 'insert_one'):
+                            self.db.insert_one("market_data", record)
+                        elif hasattr(self.db, 'market_data_collection'):
+                            self.db.market_data_collection.insert_one(record)
+                        else:
+                            self.db["market_data"].insert_one(record)
+                        single_insert_count += 1
+                    except Exception as e2:
+                        self.logger.error(f"Error in single record insertion: {e2}")
+                
+                insert_count = single_insert_count
+                self.logger.info(f"Inserted {single_insert_count} records individually after bulk insert failed")
         
-        return insert_count + existing_count
-    
+        total_count = insert_count + existing_count
+        self.logger.debug(f"Processed {total_count} {timeframe} records for {symbol}@{exchange} (new: {insert_count}, existing: {existing_count})")
+        
+        return total_count
+
     def _calculate_indicators(self, symbol, exchange, timeframe):
         """
         Calculate technical indicators and update the data
@@ -457,8 +715,16 @@ class HistoricalDataCollector:
         avg_gain[:] = np.nan
         avg_loss[:] = np.nan
         
-        avg_gain[period] = np.mean(gains[1:period+1])
-        avg_loss[period] = np.mean(losses[1:period+1])
+        # Handle edge case with all zeros
+        if np.all(gains[1:period+1] == 0):
+            avg_gain[period] = 0
+        else:
+            avg_gain[period] = np.mean(gains[1:period+1])
+            
+        if np.all(losses[1:period+1] == 0):
+            avg_loss[period] = 0
+        else:
+            avg_loss[period] = np.mean(losses[1:period+1])
         
         # Calculate averages with smoothing
         for i in range(period + 1, len(prices)):
@@ -466,19 +732,16 @@ class HistoricalDataCollector:
             avg_loss[i] = (avg_loss[i-1] * (period - 1) + losses[i]) / period
         
         # Calculate RS and RSI
-        rs = np.zeros_like(prices)
-        rs[:] = np.nan
-        
         for i in range(period, len(prices)):
             if avg_loss[i] == 0:
-                rs[i] = 100  # To avoid division by zero
+                # If no losses, RSI is 100
+                rsi[i] = 100
             else:
-                rs[i] = avg_gain[i] / avg_loss[i]
-            
-            rsi[i] = 100 - (100 / (1 + rs[i]))
+                rs = avg_gain[i] / avg_loss[i]
+                rsi[i] = 100 - (100 / (1 + rs))
         
         return rsi
-    
+
     def _calculate_macd(self, prices, fast_period=12, slow_period=26, signal_period=9):
         """
         Calculate MACD (Moving Average Convergence Divergence)
@@ -798,3 +1061,46 @@ class HistoricalDataCollector:
             current_date += time_delta
         
         return expected_timestamps
+    
+# Simple self-test when run directly
+if __name__ == "__main__":
+    import sys
+    from database.connection_manager import get_db
+    
+    # Check command line arguments
+    if len(sys.argv) < 3:
+        print("Usage: python historical_data.py SYMBOL EXCHANGE [DAYS]")
+        sys.exit(1)
+    
+    symbol = sys.argv[1]
+    exchange = sys.argv[2]
+    days = int(sys.argv[3]) if len(sys.argv) > 3 else 30
+    
+    # Set up logging
+    logging.basicConfig(level=logging.INFO, 
+                      format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # Get database connection
+    db = get_db()
+    
+    # Create collector and collect data
+    collector = HistoricalDataCollector(db)
+    results = collector.collect_all_timeframes(symbol, exchange, days)
+    
+    # Print results
+    print(f"\nCollection Results for {symbol}@{exchange}:")
+    for timeframe, count in results.items():
+        print(f"  {timeframe}: {'Success' if count else 'Failed'}")
+    
+    # Check database to confirm storage
+    try:
+        if hasattr(db, 'count_documents'):
+            count = db.count_documents("market_data", {"symbol": symbol, "exchange": exchange})
+        elif hasattr(db, 'market_data_collection'):
+            count = db.market_data_collection.count_documents({"symbol": symbol, "exchange": exchange})
+        else:
+            count = db["market_data"].count_documents({"symbol": symbol, "exchange": exchange})
+        
+        print(f"\nFound {count} total records in database for {symbol}@{exchange}")
+    except Exception as e:
+        print(f"Error checking database: {e}")

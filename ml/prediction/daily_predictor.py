@@ -150,7 +150,7 @@ class DailyPredictor:
         features_data = pd.DataFrame(index=market_data.index)
         
         # Generate technical features
-        tech_features = self.technical_features.generate_all_features(
+        tech_features = self.technical_features.generate_features(
             symbol, exchange, market_data
         )
         
@@ -989,7 +989,7 @@ class DailyPredictor:
                 'timestamp': {'$gte': pred_date, '$lte': next_date + timedelta(days=1)}
             }).sort('timestamp', 1)
             
-            market_data = list(market_data)
+            market_data = market_data.to_dict('records')
             
             if len(market_data) < 2:
                 self.logger.warning(f"Insufficient market data to evaluate prediction for {symbol} {exchange}")

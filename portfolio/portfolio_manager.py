@@ -234,14 +234,14 @@ class PortfolioManager:
             log_error(e, context={"action": "get_instrument", "symbol": symbol, "exchange": exchange})
             return None
     
-    def get_active_instruments(self, instrument_type: Optional[str] = None, 
-                              sector: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_active_instruments(self, instrument_type=None, sector=None, trading_enabled=False):
         """
         Get all active instruments in the portfolio
         
         Args:
             instrument_type (str, optional): Filter by instrument type
             sector (str, optional): Filter by sector
+            trading_enabled (bool, optional): Filter by trading enabled
             
         Returns:
             list: List of instrument documents
@@ -255,6 +255,9 @@ class PortfolioManager:
             
             if sector:
                 query["sector"] = sector.lower()
+            
+            if trading_enabled:
+                query["trading_config.enabled"] = True
             
             return self.db.find("portfolio", query)
         except Exception as e:

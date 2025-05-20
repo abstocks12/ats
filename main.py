@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
 import threading
+from trading.zerodha_manager import ensure_zerodha_connection
 
 # Load environment variables
 load_dotenv()
@@ -76,9 +77,42 @@ def initialize_system(args):
     """Initialize all system components."""
     logger.info("Initializing Automated Trading System...")
     
+    # Check Zerodha connection if trading mode is live
+    mode = getattr(args, 'mode', 'paper')
+    if mode == 'live':
+        zerodha_status = ensure_zerodha_connection()
+        if not zerodha_status:
+            logger.warning("Zerodha not connected. System will operate with limited capabilities.")
+            logger.info("Run scripts/zerodha_login.py to authenticate with Zerodha.")
+            
+            # Optionally ask to continue
+            if not getattr(args, 'force', False):
+                response = input("Continue without Zerodha connection? (y/n): ")
+                if response.lower() != 'y':
+                    logger.info("System initialization aborted by user.")
+                    sys.exit(0)
     # Define system_components dictionary
     # system_components = {}
-    
+    # Initialize Trading Controller
+    # Initialize MongoDB connection
+    db_connector = MongoDBConnector(
+        uri=os.getenv('MONGODB_URI', 'mongodb://localhost:27017/'),
+        db_name=os.getenv('DB_NAME', 'automated_trading')
+    )
+    logger.info("Connected to MongoDB")
+    try:
+        
+        from trading.trading_controller import TradingController
+        
+        trading_controller = TradingController(
+            db_connector=db_connector,
+            mode=mode
+        )
+        logger.info(f"Trading Controller initialized in {mode} mode")
+        system_components['trading_controller'] = trading_controller
+    except ImportError as e:
+        logger.error(f"Trading Controller not available: {e}")
+        trading_controller = None
     # Load settings
     from config import settings
     # Only try to load custom config if it's not the default value
@@ -86,19 +120,21 @@ def initialize_system(args):
         config = settings.load_custom_config(args.config)
     logger.info(f"Loaded configuration profile: {args.config or 'default'}")
     
-    # Initialize MongoDB connection
-    db_connector = MongoDBConnector(
-        uri=os.getenv('MONGODB_URI', 'mongodb://localhost:27017/'),
-        db_name=os.getenv('DB_NAME', 'automated_trading_system')
-    )
-    logger.info("Connected to MongoDB")
+    
     
     # Initialize the scheduler
+    
     scheduler = None
     try:
         from automation.scheduler import Scheduler
         scheduler = Scheduler(db_connector)
+        try:
+            cleared_count = scheduler.clear_tasks()
+            logger.info(f"Cleared {cleared_count} existing scheduled tasks")
+        except Exception as e:
+            logger.warning(f"Could not clear scheduled tasks: {e}")
         logger.info("Scheduler initialized")
+        
     except ImportError as e:
         logger.warning(f"Scheduler not available: {e}")
         # Create a simple placeholder scheduler class to avoid KeyError
@@ -113,7 +149,8 @@ def initialize_system(args):
                 logger.warning("Placeholder scheduler - stop called but not implemented")
         
         scheduler = PlaceholderScheduler()
-    
+    # Clear existing scheduled tasks
+
     # Always add scheduler to system_components, even if it's a placeholder
     system_components['scheduler'] = scheduler
     
@@ -237,7 +274,9 @@ def initialize_system(args):
         
         # Initialize Workflow components
         try:
-            from automation import DailyWorkflow, WeeklyWorkflow, MonthlyWorkflow
+            from automation.daily_workflow import DailyWorkflow
+            from automation.weekly_workflow import WeeklyWorkflow 
+            from automation.monthly_workflow import MonthlyWorkflow
             from automation.model_retraining import ModelRetraining
             
             daily_workflow = DailyWorkflow(db_connector)
@@ -303,6 +342,8 @@ def run_live_system():
     trading_controller = system_components['trading_controller']
     notification_manager = system_components['notification_manager']
     market_hours = system_components['market_hours']
+    scheduler.clear_tasks()
+    
     
     # Start the scheduler
     scheduler.start()

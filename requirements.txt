@@ -71,3 +71,5 @@ flake8>=3.9.0
 
 croniter>=2.0.0  # For cron-based scheduling
 reportlab>=3.6.0  # For PDF report generation
+xgboost
+# pip install TA-Lib

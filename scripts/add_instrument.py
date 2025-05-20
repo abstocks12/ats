@@ -7,14 +7,13 @@ import os
 import sys
 import argparse
 from datetime import datetime
-
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from portfolio.portfolio_manager import PortfolioManager
 from database.connection_manager import get_db
 from utils.logging_utils import setup_logger
-
+from trading.zerodha_manager import ensure_zerodha_connection
 logger = setup_logger(__name__)
 
 def add_instrument(symbol, exchange, instrument_type=None, sector=None, **kwargs):
@@ -34,6 +33,10 @@ def add_instrument(symbol, exchange, instrument_type=None, sector=None, **kwargs
     try:
         # Get database connection
         db = get_db()
+        # Check Zerodha connection - not required but good for verification
+        zerodha_status = ensure_zerodha_connection()
+        if not zerodha_status:
+            logger.warning("Zerodha not connected. Adding instrument to portfolio, but data collection may be limited")
         
         # Create portfolio manager
         portfolio_manager = PortfolioManager(db)
@@ -55,7 +58,10 @@ def add_instrument(symbol, exchange, instrument_type=None, sector=None, **kwargs
             return False
             
     except Exception as e:
-        logger.error(f"Error adding instrument: {e}")
+        if "Zerodha" in str(e) or "kite" in str(e).lower():
+            logger.error(f"Zerodha connection error: {e}. Run scripts/zerodha_login.py to authenticate.")
+        else:
+            logger.error(f"Error adding instrument: {e}")
         return False
 
 def main():

@@ -447,14 +447,24 @@ class RealTimeDataCollector:
         try:
             # Create a copy to avoid modifying the original
             db_data = data.copy()
-            
+            # Create a copy without the _id field
+            if '_id' in db_data:
+                update_data = {k: v for k, v in db_data.items() if k != '_id'}
+            else:
+                update_data = db_data
+                
+            # Now update
+            try:
+                self.db.insert_one('real_time_data', update_data)
+            except Exception as e:
+                print(f"Error storing real-time data: {e}")
             # Store in real-time collection
             self.db.real_time_data_collection.update_one(
                 {
                     "symbol": data["symbol"],
                     "exchange": data["exchange"]
                 },
-                {"$set": db_data},
+                {"$set": update_data},
                 upsert=True
             )
             

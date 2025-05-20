@@ -543,7 +543,17 @@ class Scheduler:
         except Exception as e:
             self.logger.error(f"Error calculating next cron time: {e}")
             return None
-    
+    def clear_tasks(self):
+        """Clear all scheduled tasks."""
+        if self.db:
+            try:
+                result = self.db.tasks_collection.delete_many({})
+                self.logger.info(f"Cleared {result.deleted_count} scheduled tasks")
+                return result.deleted_count
+            except Exception as e:
+                self.logger.error(f"Error clearing scheduled tasks: {e}")
+                return 0
+        
     def _simple_cron_next_time(self, cron_expression):
         """
         Simple implementation for calculating next run time from cron expression.

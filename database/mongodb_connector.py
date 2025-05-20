@@ -235,6 +235,8 @@ class MongoDBConnector:
         # using backup collections or journaling
         pass
 
+    
+
     def get_collection(self, collection_name):
         """
         Get MongoDB collection
@@ -649,526 +651,556 @@ class MongoDBConnector:
 
 # Helper methods for specific collections
 
-def get_market_data(self, symbol, exchange, timeframe, start_date=None, end_date=None):
-    """
-    Get market data for a specific symbol, exchange, and timeframe
-    
-    Args:
-        symbol (str): Instrument symbol
-        exchange (str): Exchange code
-        timeframe (str): Timeframe (e.g. '1min', '5min', 'day')
-        start_date (datetime, optional): Start date
-        end_date (datetime, optional): End date
+    def get_market_data(self, symbol, exchange, timeframe, start_date=None, end_date=None):
+        """
+        Get market data for a specific symbol, exchange, and timeframe
         
-    Returns:
-        list: List of market data documents
-    """
-    query = {
-        "symbol": symbol,
-        "exchange": exchange,
-        "timeframe": timeframe
-    }
-    
-    # Add date range if provided
-    if start_date or end_date:
-        query["timestamp"] = {}
+        Args:
+            symbol (str): Instrument symbol
+            exchange (str): Exchange code
+            timeframe (str): Timeframe (e.g. '1min', '5min', 'day')
+            start_date (datetime, optional): Start date
+            end_date (datetime, optional): End date
+            
+        Returns:
+            list: List of market data documents
+        """
+        query = {
+            "symbol": symbol,
+            "exchange": exchange,
+            "timeframe": timeframe
+        }
         
-        if start_date:
-            query["timestamp"]["$gte"] = start_date
+        # Add date range if provided
+        if start_date or end_date:
+            query["timestamp"] = {}
+            
+            if start_date:
+                query["timestamp"]["$gte"] = start_date
+            
+            if end_date:
+                query["timestamp"]["$lte"] = end_date
         
-        if end_date:
-            query["timestamp"]["$lte"] = end_date
-    
-    return self.find(
-        collection_name="market_data",
-        query=query,
-        sort=[("timestamp", pymongo.ASCENDING)]
-    )
+        return self.find(
+            collection_name="market_data",
+            query=query,
+            sort=[("timestamp", pymongo.ASCENDING)]
+        )
 
-def save_market_data(self, market_data):
-    """
-    Save market data to the database
-    
-    Args:
-        market_data (list): List of market data documents
+    def save_market_data(self, market_data):
+        """
+        Save market data to the database
         
-    Returns:
-        int: Number of documents inserted
-    """
-    if not market_data:
+        Args:
+            market_data (list): List of market data documents
+            
+        Returns:
+            int: Number of documents inserted
+        """
+        if not market_data:
+            return 0
+        
+        # Create bulk operations
+        operations = []
+        collection = self.get_collection("market_data")
+        
+        for data in market_data:
+            # Ensure required fields
+            if not all(field in data for field in ["symbol", "exchange", "timeframe", "timestamp"]):
+                continue
+            
+            # Create update operation
+            operations.append(
+                pymongo.UpdateOne(
+                    {
+                        "symbol": data["symbol"],
+                        "exchange": data["exchange"],
+                        "timeframe": data["timeframe"],
+                        "timestamp": data["timestamp"]
+                    },
+                    {"$set": data},
+                    upsert=True
+                )
+            )
+        
+        # Execute bulk operation
+        if operations:
+            try:
+                result = collection.bulk_write(operations)
+                return result.upserted_count + result.modified_count
+            except Exception as e:
+                log_error(e, context={"action": "save_market_data"})
+                return 0
+        
         return 0
-    
-    # Create bulk operations
-    operations = []
-    collection = self.get_collection("market_data")
-    
-    for data in market_data:
-        # Ensure required fields
-        if not all(field in data for field in ["symbol", "exchange", "timeframe", "timestamp"]):
-            continue
+
+    def get_latest_price(self, symbol, exchange):
+        """
+        Get the latest price for a symbol
         
-        # Create update operation
-        operations.append(
-            pymongo.UpdateOne(
-                {
+        Args:
+            symbol (str): Instrument symbol
+            exchange (str): Exchange code
+            
+        Returns:
+            float: Latest price or None
+        """
+        result = self.find_one(
+            collection_name="market_data",
+            query={"symbol": symbol, "exchange": exchange},
+            sort=[("timestamp", pymongo.DESCENDING)]
+        )
+        
+        if result and "close" in result:
+            return result["close"]
+        
+        return None
+
+    def save_financial_data(self, data):
+        """
+        Save financial data to the database
+        
+        Args:
+            data (dict): Financial data document
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not data:
+            return False
+        
+        # Ensure required fields
+        if not all(field in data for field in ["symbol", "exchange", "report_type", "period"]):
+            return False
+        
+        try:
+            # Use upsert to insert or update
+            result = self.update_one(
+                collection_name="financial",
+                query={
                     "symbol": data["symbol"],
                     "exchange": data["exchange"],
-                    "timeframe": data["timeframe"],
-                    "timestamp": data["timestamp"]
+                    "report_type": data["report_type"],
+                    "period": data["period"]
                 },
-                {"$set": data},
+                update={"$set": data},
                 upsert=True
             )
-        )
-    
-    # Execute bulk operation
-    if operations:
-        try:
-            result = collection.bulk_write(operations)
-            return result.upserted_count + result.modified_count
+            
+            return result
         except Exception as e:
-            log_error(e, context={"action": "save_market_data"})
-            return 0
-    
-    return 0
+            log_error(e, context={"action": "save_financial_data"})
+            return False
 
-def get_latest_price(self, symbol, exchange):
-    """
-    Get the latest price for a symbol
-    
-    Args:
-        symbol (str): Instrument symbol
-        exchange (str): Exchange code
+    def get_financial_data(self, symbol, exchange, report_type=None):
+        """
+        Get financial data for a symbol
         
-    Returns:
-        float: Latest price or None
-    """
-    result = self.find_one(
-        collection_name="market_data",
-        query={"symbol": symbol, "exchange": exchange},
-        sort=[("timestamp", pymongo.DESCENDING)]
-    )
-    
-    if result and "close" in result:
-        return result["close"]
-    
-    return None
-
-def save_financial_data(self, data):
-    """
-    Save financial data to the database
-    
-    Args:
-        data (dict): Financial data document
+        Args:
+            symbol (str): Instrument symbol
+            exchange (str): Exchange code
+            report_type (str, optional): Report type (e.g. 'quarterly', 'annual')
+            
+        Returns:
+            list: List of financial data documents
+        """
+        query = {
+            "symbol": symbol,
+            "exchange": exchange
+        }
         
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    if not data:
-        return False
-    
-    # Ensure required fields
-    if not all(field in data for field in ["symbol", "exchange", "report_type", "period"]):
-        return False
-    
-    try:
-        # Use upsert to insert or update
-        result = self.update_one(
+        if report_type:
+            query["report_type"] = report_type
+        
+        return self.find(
             collection_name="financial",
-            query={
-                "symbol": data["symbol"],
-                "exchange": data["exchange"],
-                "report_type": data["report_type"],
-                "period": data["period"]
-            },
-            update={"$set": data},
-            upsert=True
+            query=query,
+            sort=[("period", pymongo.DESCENDING)]
         )
-        
-        return result
-    except Exception as e:
-        log_error(e, context={"action": "save_financial_data"})
-        return False
 
-def get_financial_data(self, symbol, exchange, report_type=None):
-    """
-    Get financial data for a symbol
-    
-    Args:
-        symbol (str): Instrument symbol
-        exchange (str): Exchange code
-        report_type (str, optional): Report type (e.g. 'quarterly', 'annual')
+    def save_news(self, news_items):
+        """
+        Save news items to the database
         
-    Returns:
-        list: List of financial data documents
-    """
-    query = {
-        "symbol": symbol,
-        "exchange": exchange
-    }
-    
-    if report_type:
-        query["report_type"] = report_type
-    
-    return self.find(
-        collection_name="financial",
-        query=query,
-        sort=[("period", pymongo.DESCENDING)]
-    )
-
-def save_news(self, news_items):
-    """
-    Save news items to the database
-    
-    Args:
-        news_items (list): List of news item documents
-        
-    Returns:
-        int: Number of news items saved
-    """
-    if not news_items:
-        return 0
-    
-    # Create bulk operations
-    operations = []
-    collection = self.get_collection("news")
-    
-    for news in news_items:
-        # Skip if no title
-        if "title" not in news:
-            continue
-        
-        # Create update operation
-        operations.append(
-            pymongo.UpdateOne(
-                {"title": news["title"]},
-                {"$set": news},
-                upsert=True
-            )
-        )
-    
-    # Execute bulk operation
-    if operations:
-        try:
-            result = collection.bulk_write(operations)
-            return result.upserted_count + result.modified_count
-        except Exception as e:
-            log_error(e, context={"action": "save_news"})
+        Args:
+            news_items (list): List of news item documents
+            
+        Returns:
+            int: Number of news items saved
+        """
+        if not news_items:
             return 0
-    
-    return 0
+        
+        # Create bulk operations
+        operations = []
+        collection = self.get_collection("news")
+        
+        for news in news_items:
+            # Skip if no title
+            if "title" not in news:
+                continue
+            
+            # Create update operation
+            operations.append(
+                pymongo.UpdateOne(
+                    {"title": news["title"]},
+                    {"$set": news},
+                    upsert=True
+                )
+            )
+        
+        # Execute bulk operation
+        if operations:
+            try:
+                result = collection.bulk_write(operations)
+                return result.upserted_count + result.modified_count
+            except Exception as e:
+                log_error(e, context={"action": "save_news"})
+                return 0
+        
+        return 0
 
-def get_news(self, symbol=None, start_date=None, end_date=None, limit=20):
-    """
-    Get news items
-    
-    Args:
-        symbol (str, optional): Instrument symbol
-        start_date (datetime, optional): Start date
-        end_date (datetime, optional): End date
-        limit (int, optional): Maximum number of items to return
+    def get_news(self, symbol=None, start_date=None, end_date=None, limit=20):
+        """
+        Get news items
         
-    Returns:
-        list: List of news items
-    """
-    query = {}
-    
-    if symbol:
-        query["$or"] = [
-            {"symbol": symbol},
-            {"related_symbols": symbol}
-        ]
-    
-    # Add date range if provided
-    if start_date or end_date:
-        query["published_date"] = {}
+        Args:
+            symbol (str, optional): Instrument symbol
+            start_date (datetime, optional): Start date
+            end_date (datetime, optional): End date
+            limit (int, optional): Maximum number of items to return
+            
+        Returns:
+            list: List of news items
+        """
+        query = {}
         
-        if start_date:
-            query["published_date"]["$gte"] = start_date
+        if symbol:
+            query["$or"] = [
+                {"symbol": symbol},
+                {"related_symbols": symbol}
+            ]
         
-        if end_date:
-            query["published_date"]["$lte"] = end_date
-    
-    return self.find(
-        collection_name="news",
-        query=query,
-        sort=[("published_date", pymongo.DESCENDING)],
-        limit=limit
-    )
+        # Add date range if provided
+        if start_date or end_date:
+            query["published_date"] = {}
+            
+            if start_date:
+                query["published_date"]["$gte"] = start_date
+            
+            if end_date:
+                query["published_date"]["$lte"] = end_date
+        
+        return self.find(
+            collection_name="news",
+            query=query,
+            sort=[("published_date", pymongo.DESCENDING)],
+            limit=limit
+        )
 
-def save_prediction(self, prediction):
-    """
-    Save a prediction to the database
-    
-    Args:
-        prediction (dict): Prediction document
+    def save_prediction(self, prediction):
+        """
+        Save a prediction to the database
         
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    if not prediction:
-        return False
-    
-    # Ensure required fields
-    if not all(field in prediction for field in ["symbol", "exchange", "date", "prediction"]):
-        return False
-    
-    try:
-        result = self.insert_one(
+        Args:
+            prediction (dict): Prediction document
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not prediction:
+            return False
+        
+        # Ensure required fields
+        if not all(field in prediction for field in ["symbol", "exchange", "date", "prediction"]):
+            return False
+        
+        try:
+            result = self.insert_one(
+                collection_name="predictions",
+                document=prediction
+            )
+            
+            return result is not None
+        except Exception as e:
+            log_error(e, context={"action": "save_prediction"})
+            return False
+
+    def __getattr__(self, name):
+        """
+        Handle attribute access for collection names dynamically.
+        This allows accessing collections as attributes even if they weren't explicitly defined.
+        
+        Args:
+            name (str): Attribute name
+            
+        Returns:
+            Collection: MongoDB collection
+        """
+        # Check if this is a collection attribute (ending with _collection)
+        if name.endswith('_collection'):
+            # Extract collection name (remove _collection suffix)
+            collection_name = name[:-11]  # Remove '_collection'
+            
+            # Check if collection exists
+            if collection_name in settings.MONGODB_COLLECTIONS.values() or collection_name in settings.MONGODB_COLLECTIONS.keys():
+                # Use the collection name from settings if it's a key
+                if collection_name in settings.MONGODB_COLLECTIONS:
+                    actual_name = settings.MONGODB_COLLECTIONS[collection_name]
+                else:
+                    actual_name = collection_name
+                    
+                # Return the collection
+                return self.db[actual_name]
+        
+        # Attribute not found
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+    def get_predictions(self, symbol, exchange, start_date=None, end_date=None, limit=10):
+        """
+        Get predictions for a symbol
+        
+        Args:
+            symbol (str): Instrument symbol
+            exchange (str): Exchange code
+            start_date (datetime, optional): Start date
+            end_date (datetime, optional): End date
+            limit (int, optional): Maximum number of items to return
+            
+        Returns:
+            list: List of predictions
+        """
+        query = {
+            "symbol": symbol,
+            "exchange": exchange
+        }
+        
+        # Add date range if provided
+        if start_date or end_date:
+            query["date"] = {}
+            
+            if start_date:
+                query["date"]["$gte"] = start_date
+            
+            if end_date:
+                query["date"]["$lte"] = end_date
+        
+        return self.find(
             collection_name="predictions",
-            document=prediction
+            query=query,
+            sort=[("date", pymongo.DESCENDING)],
+            limit=limit
         )
-        
-        return result is not None
-    except Exception as e:
-        log_error(e, context={"action": "save_prediction"})
-        return False
 
-def get_predictions(self, symbol, exchange, start_date=None, end_date=None, limit=10):
-    """
-    Get predictions for a symbol
-    
-    Args:
-        symbol (str): Instrument symbol
-        exchange (str): Exchange code
-        start_date (datetime, optional): Start date
-        end_date (datetime, optional): End date
-        limit (int, optional): Maximum number of items to return
+    def save_trade(self, trade):
+        """
+        Save a trade to the database
         
-    Returns:
-        list: List of predictions
-    """
-    query = {
-        "symbol": symbol,
-        "exchange": exchange
-    }
-    
-    # Add date range if provided
-    if start_date or end_date:
-        query["date"] = {}
+        Args:
+            trade (dict): Trade document
+            
+        Returns:
+            str: Trade ID if successful, None otherwise
+        """
+        if not trade:
+            return None
         
-        if start_date:
-            query["date"]["$gte"] = start_date
+        # Ensure required fields
+        if not all(field in trade for field in ["symbol", "exchange", "trade_type", "entry_price", "entry_time", "quantity"]):
+            return None
         
-        if end_date:
-            query["date"]["$lte"] = end_date
-    
-    return self.find(
-        collection_name="predictions",
-        query=query,
-        sort=[("date", pymongo.DESCENDING)],
-        limit=limit
-    )
+        try:
+            result = self.insert_one(
+                collection_name="trades",
+                document=trade
+            )
+            
+            return result
+        except Exception as e:
+            log_error(e, context={"action": "save_trade"})
+            return None
 
-def save_trade(self, trade):
-    """
-    Save a trade to the database
-    
-    Args:
-        trade (dict): Trade document
+    def update_trade(self, trade_id, updates):
+        """
+        Update a trade
         
-    Returns:
-        str: Trade ID if successful, None otherwise
-    """
-    if not trade:
-        return None
-    
-    # Ensure required fields
-    if not all(field in trade for field in ["symbol", "exchange", "trade_type", "entry_price", "entry_time", "quantity"]):
-        return None
-    
-    try:
-        result = self.insert_one(
+        Args:
+            trade_id: Trade ID
+            updates (dict): Updates to apply
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not trade_id or not updates:
+            return False
+        
+        try:
+            result = self.update_one(
+                collection_name="trades",
+                query={"_id": trade_id},
+                update={"$set": updates}
+            )
+            
+            return result
+        except Exception as e:
+            log_error(e, context={"action": "update_trade"})
+            return False
+
+    def get_trades(self, symbol=None, start_date=None, end_date=None, status=None, limit=100):
+        """
+        Get trades
+        
+        Args:
+            symbol (str, optional): Instrument symbol
+            start_date (datetime, optional): Start date
+            end_date (datetime, optional): End date
+            status (str, optional): Trade status (open, closed)
+            limit (int, optional): Maximum number of items to return
+            
+        Returns:
+            list: List of trades
+        """
+        query = {}
+        
+        if symbol:
+            query["symbol"] = symbol
+        
+        if status:
+            query["status"] = status
+        
+        # Add date range if provided
+        if start_date or end_date:
+            query["entry_time"] = {}
+            
+            if start_date:
+                query["entry_time"]["$gte"] = start_date
+            
+            if end_date:
+                query["entry_time"]["$lte"] = end_date
+        
+        return self.find(
             collection_name="trades",
-            document=trade
+            query=query,
+            sort=[("entry_time", pymongo.DESCENDING)],
+            limit=limit
         )
-        
-        return result
-    except Exception as e:
-        log_error(e, context={"action": "save_trade"})
-        return None
 
-def update_trade(self, trade_id, updates):
-    """
-    Update a trade
-    
-    Args:
-        trade_id: Trade ID
-        updates (dict): Updates to apply
+    def save_performance(self, performance):
+        """
+        Save performance metrics
         
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    if not trade_id or not updates:
-        return False
-    
-    try:
-        result = self.update_one(
-            collection_name="trades",
-            query={"_id": trade_id},
-            update={"$set": updates}
-        )
+        Args:
+            performance (dict): Performance document
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not performance:
+            return False
         
-        return result
-    except Exception as e:
-        log_error(e, context={"action": "update_trade"})
-        return False
+        # Ensure required fields
+        if "date" not in performance:
+            performance["date"] = datetime.now()
+        
+        try:
+            result = self.insert_one(
+                collection_name="performance",
+                document=performance
+            )
+            
+            return result is not None
+        except Exception as e:
+            log_error(e, context={"action": "save_performance"})
+            return False
 
-def get_trades(self, symbol=None, start_date=None, end_date=None, status=None, limit=100):
-    """
-    Get trades
-    
-    Args:
-        symbol (str, optional): Instrument symbol
-        start_date (datetime, optional): Start date
-        end_date (datetime, optional): End date
-        status (str, optional): Trade status (open, closed)
-        limit (int, optional): Maximum number of items to return
+    def get_performance(self, start_date=None, end_date=None):
+        """
+        Get performance metrics
         
-    Returns:
-        list: List of trades
-    """
-    query = {}
-    
-    if symbol:
-        query["symbol"] = symbol
-    
-    if status:
-        query["status"] = status
-    
-    # Add date range if provided
-    if start_date or end_date:
-        query["entry_time"] = {}
+        Args:
+            start_date (datetime, optional): Start date
+            end_date (datetime, optional): End date
+            
+        Returns:
+            list: List of performance documents
+        """
+        query = {}
         
-        if start_date:
-            query["entry_time"]["$gte"] = start_date
+        # Add date range if provided
+        if start_date or end_date:
+            query["date"] = {}
+            
+            if start_date:
+                query["date"]["$gte"] = start_date
+            
+            if end_date:
+                query["date"]["$lte"] = end_date
         
-        if end_date:
-            query["entry_time"]["$lte"] = end_date
-    
-    return self.find(
-        collection_name="trades",
-        query=query,
-        sort=[("entry_time", pymongo.DESCENDING)],
-        limit=limit
-    )
-
-def save_performance(self, performance):
-    """
-    Save performance metrics
-    
-    Args:
-        performance (dict): Performance document
-        
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    if not performance:
-        return False
-    
-    # Ensure required fields
-    if "date" not in performance:
-        performance["date"] = datetime.now()
-    
-    try:
-        result = self.insert_one(
+        return self.find(
             collection_name="performance",
-            document=performance
+            query=query,
+            sort=[("date", pymongo.ASCENDING)]
         )
-        
-        return result is not None
-    except Exception as e:
-        log_error(e, context={"action": "save_performance"})
-        return False
 
-def get_performance(self, start_date=None, end_date=None):
-    """
-    Get performance metrics
-    
-    Args:
-        start_date (datetime, optional): Start date
-        end_date (datetime, optional): End date
+    def log_system_event(self, event_type, details=None):
+        """
+        Log a system event
         
-    Returns:
-        list: List of performance documents
-    """
-    query = {}
-    
-    # Add date range if provided
-    if start_date or end_date:
-        query["date"] = {}
+        Args:
+            event_type (str): Type of event
+            details (dict, optional): Event details
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        log_entry = {
+            "timestamp": datetime.now(),
+            "event_type": event_type,
+            "details": details or {}
+        }
         
-        if start_date:
-            query["date"]["$gte"] = start_date
-        
-        if end_date:
-            query["date"]["$lte"] = end_date
-    
-    return self.find(
-        collection_name="performance",
-        query=query,
-        sort=[("date", pymongo.ASCENDING)]
-    )
+        try:
+            result = self.insert_one(
+                collection_name="system_logs",
+                document=log_entry
+            )
+            
+            return result is not None
+        except Exception as e:
+            log_error(e, context={"action": "log_system_event"})
+            return False
 
-def log_system_event(self, event_type, details=None):
-   """
-   Log a system event
-   
-   Args:
-       event_type (str): Type of event
-       details (dict, optional): Event details
-       
-   Returns:
-       bool: True if successful, False otherwise
-   """
-   log_entry = {
-       "timestamp": datetime.now(),
-       "event_type": event_type,
-       "details": details or {}
-   }
-   
-   try:
-       result = self.insert_one(
-           collection_name="system_logs",
-           document=log_entry
-       )
-       
-       return result is not None
-   except Exception as e:
-       log_error(e, context={"action": "log_system_event"})
-       return False
-
-def get_system_logs(self, event_type=None, start_date=None, end_date=None, limit=100):
-   """
-   Get system logs
-   
-   Args:
-       event_type (str, optional): Type of event
-       start_date (datetime, optional): Start date
-       end_date (datetime, optional): End date
-       limit (int, optional): Maximum number of items to return
-       
-   Returns:
-       list: List of log entries
-   """
-   query = {}
-   
-   if event_type:
-       query["event_type"] = event_type
-   
-   # Add date range if provided
-   if start_date or end_date:
-       query["timestamp"] = {}
-       
-       if start_date:
-           query["timestamp"]["$gte"] = start_date
-       
-       if end_date:
-           query["timestamp"]["$lte"] = end_date
-   
-   return self.find(
-       collection_name="system_logs",
-       query=query,
-       sort=[("timestamp", pymongo.DESCENDING)],
-       limit=limit
-   )
+    def get_system_logs(self, event_type=None, start_date=None, end_date=None, limit=100):
+        """
+        Get system logs
+        
+        Args:
+            event_type (str, optional): Type of event
+            start_date (datetime, optional): Start date
+            end_date (datetime, optional): End date
+            limit (int, optional): Maximum number of items to return
+            
+        Returns:
+            list: List of log entries
+        """
+        query = {}
+        
+        if event_type:
+            query["event_type"] = event_type
+        
+        # Add date range if provided
+        if start_date or end_date:
+            query["timestamp"] = {}
+            
+            if start_date:
+                query["timestamp"]["$gte"] = start_date
+            
+            if end_date:
+                query["timestamp"]["$lte"] = end_date
+        
+        return self.find(
+            collection_name="system_logs",
+            query=query,
+            sort=[("timestamp", pymongo.DESCENDING)],
+            limit=limit
+        )

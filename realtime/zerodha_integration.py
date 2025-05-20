@@ -33,7 +33,8 @@ class ZerodhaConnector:
         self.ticker = None
         
         # State
-        self.is_connected = False
+        # self.connection_status = False
+        self.connection_status = False
         self.connection_time = None
         self.subscribed_tokens = {}
         self.token_symbol_map = {}
@@ -64,7 +65,7 @@ class ZerodhaConnector:
             # Set access token if provided
             if self.access_token:
                 self.kite.set_access_token(self.access_token)
-                self.is_connected = True
+                self.connection_status = True
                 self.connection_time = datetime.now()
                 
                 # Initialize instrument cache
@@ -147,7 +148,7 @@ class ZerodhaConnector:
             self.access_token = access_token
             self.kite.set_access_token(access_token)
             
-            self.is_connected = True
+            self.connection_status = True
             self.connection_time = datetime.now()
             
             # Initialize instrument cache
@@ -168,7 +169,7 @@ class ZerodhaConnector:
         Returns:
             bool: Connection status
         """
-        if not self.is_connected or not self.access_token:
+        if not self.connection_status or not self.access_token:
             return False
             
         # Check if access token is expired (tokens are valid for a day)
@@ -182,10 +183,10 @@ class ZerodhaConnector:
                     self.kite.margins()
                     return True
                 except Exception:
-                    self.is_connected = False
+                    self.connection_status = False
                     return False
         
-        return self.is_connected
+        return self.connection_status
     
     def subscribe(self, symbols, exchanges=None):
         """
@@ -199,7 +200,7 @@ class ZerodhaConnector:
             bool: Success status
         """
         try:
-            if not self.is_connected():
+            if not self.connection_status():
                 self.logger.error("Not connected to Zerodha")
                 return False
                 
@@ -334,7 +335,7 @@ class ZerodhaConnector:
                 self.ticker.close(1000, "Manual disconnect")
                 self.ticker = None
                 
-            self.is_connected = False
+            self.connection_status = False
             self.logger.info("Disconnected from Zerodha")
             
         except Exception as e:
@@ -549,7 +550,7 @@ class ZerodhaConnector:
             list: Historical data
         """
         try:
-            if not self.is_connected():
+            if not self.connection_status():
                 self.logger.error("Not connected to Zerodha")
                 return None
                 
@@ -637,7 +638,7 @@ class ZerodhaConnector:
                 return self.ltp_cache[key]
                 
             # Not in cache, get from API
-            if not self.is_connected():
+            if not self.connection_status():
                 self.logger.error("Not connected to Zerodha")
                 return None
                 
@@ -702,7 +703,7 @@ class ZerodhaConnector:
             dict: Order result
         """
         try:
-            if not self.is_connected():
+            if not self.connection_status():
                 self.logger.error("Not connected to Zerodha")
                 return None
                 
@@ -876,7 +877,7 @@ class ZerodhaConnector:
             dict: Order status
         """
         try:
-            if not self.is_connected():
+            if not self.connection_status():
                 return None
                 
             # Check cache first
@@ -918,7 +919,7 @@ class ZerodhaConnector:
             bool: Success status
         """
         try:
-            if not self.is_connected():
+            if not self.connection_status():
                 return False
                 
             # Cancel order
@@ -946,7 +947,7 @@ class ZerodhaConnector:
             dict: Account information
         """
         try:
-            if not self.is_connected():
+            if not self.connection_status():
                 return None
                 
             # Get profile

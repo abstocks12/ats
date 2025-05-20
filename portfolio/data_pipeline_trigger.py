@@ -16,6 +16,27 @@ from config import settings
 from database.connection_manager import get_db
 from utils.logging_utils import setup_logger, log_error
 from utils.helper_functions import normalize_symbol
+from research.fundamental_analyzer import FundamentalAnalyzer
+from data.news.sentiment_analyzer import SentimentAnalyzer
+from data.market.historical_data import HistoricalDataCollector
+from portfolio.instrument_setup import InstrumentSetup
+from portfolio.portfolio_manager import PortfolioManager
+
+
+from data.global_markets.indices_collector import IndicesCollector
+
+from data.financial.financial_scraper import FinancialScraper
+from research.technical_analyzer import TechnicalAnalyzer
+
+
+from ml.prediction.daily_predictor import DailyPredictor
+import random
+from database.models import PredictionData
+from data.news.news_aggregator import NewsAggregator
+
+
+
+
 
 class DataPipelineTrigger:
     """
@@ -72,7 +93,7 @@ class DataPipelineTrigger:
         """
         try:
             # Set up instrument configuration
-            from portfolio.instrument_setup import InstrumentSetup
+            
             setup = InstrumentSetup(self.db)
             config = setup.setup_instrument(symbol, exchange, instrument_type)
             
@@ -94,7 +115,7 @@ class DataPipelineTrigger:
             self._run_initial_analysis(symbol, exchange, config)
             
             # Update portfolio status
-            from portfolio.portfolio_manager import PortfolioManager
+            
             portfolio_manager = PortfolioManager(self.db)
             portfolio_manager.update_data_collection_status(symbol, exchange, "all", True)
             
@@ -102,6 +123,8 @@ class DataPipelineTrigger:
             
         except Exception as e:
             log_error(e, context={"action": "collect_data_thread", "symbol": symbol, "exchange": exchange})
+        # Re-raise to see full traceback
+        raise
     
     def _collect_historical_data(self, symbol: str, exchange: str, config: Dict[str, Any]) -> None:
        """
@@ -119,7 +142,6 @@ class DataPipelineTrigger:
            # We import here to avoid circular imports
            try:
                # First try to import the real implementation
-               from data.market.historical_data import HistoricalDataCollector
                collector = HistoricalDataCollector(self.db)
            except ImportError:
                # If not available, create a placeholder implementation
@@ -134,7 +156,7 @@ class DataPipelineTrigger:
                        self.logger.info(f"Placeholder: Collecting {timeframe} data for {symbol}:{exchange}")
                        
                        # Update data collection status
-                       from portfolio.portfolio_manager import PortfolioManager
+                       
                        portfolio_manager = PortfolioManager(self.db)
                        portfolio_manager.update_data_collection_status(symbol, exchange, "historical", True)
                        
@@ -144,32 +166,42 @@ class DataPipelineTrigger:
            
            # Collect data for each timeframe
            for timeframe in config.get("timeframes", ["day", "60min", "5min"]):
-               # Convert timeframe to collector format if needed
-               collector_timeframe = timeframe
-               if timeframe == "60min":
-                   collector_timeframe = "hour"
-               elif timeframe == "1min":
-                   collector_timeframe = "minute"
-               
-               # Get historical days based on timeframe
-               if timeframe == "day":
-                   days = settings.HISTORICAL_DAYS_DEFAULT
-               elif timeframe == "60min" or timeframe == "hour":
-                   days = 90  # 3 months
-               elif timeframe == "15min":
-                   days = 30  # 1 month
-               elif timeframe == "5min":
-                   days = 15  # 15 days
-               elif timeframe == "1min" or timeframe == "minute":
-                   days = 7  # 1 week
-               else:
-                   days = 30  # Default
-               
-               # Collect data
-               collector.collect_data(symbol, exchange, collector_timeframe, days)
-           
+                try:
+                   # Convert timeframe to collector format if needed
+                    collector_timeframe = timeframe
+                    if timeframe == "60min":
+                        collector_timeframe = "hour"
+                    elif timeframe == "1min":
+                        collector_timeframe = "minute"
+                    
+                    # Get historical days based on timeframe
+                    if timeframe == "day":
+                        days = settings.HISTORICAL_DAYS_DEFAULT
+                    elif timeframe == "60min" or timeframe == "hour":
+                        days = 90  # 3 months
+                    elif timeframe == "15min":
+                        days = 30  # 1 month
+                    elif timeframe == "5min":
+                        days = 15  # 15 days
+                    elif timeframe == "1min" or timeframe == "minute":
+                        days = 7  # 1 week
+                    else:
+                        days = 30  # Default
+                    try:
+                        # Collect data
+                        collector.collect_data(symbol, exchange, collector_timeframe, days)
+                    except ZeroDivisionError as zde:
+                        self.logger.error(f"Division by zero error in historical data collection: {zde}")
+                        self.logger.error(f"This likely indicates missing or invalid data for {symbol}:{exchange}")
+                        # Continue with next timeframe instead of failing
+                        continue
+                        
+                except Exception as e:
+                    self.logger.error(f"Error collecting data for timeframe {timeframe}: {e}")
+                    continue
+            
            # Update data collection status
-           from portfolio.portfolio_manager import PortfolioManager
+          
            portfolio_manager = PortfolioManager(self.db)
            portfolio_manager.update_data_collection_status(symbol, exchange, "historical", True)
            
@@ -180,7 +212,7 @@ class DataPipelineTrigger:
            
            # Update data collection status with failure
            try:
-               from portfolio.portfolio_manager import PortfolioManager
+               
                portfolio_manager = PortfolioManager(self.db)
                portfolio_manager.update_data_collection_status(symbol, exchange, "historical", False)
            except:
@@ -201,7 +233,7 @@ class DataPipelineTrigger:
             # Import necessary components
             try:
                 # First try to import the real implementation
-                from data.financial.financial_scraper import FinancialScraper
+                
                 scraper = FinancialScraper(symbol, exchange, self.db)
             except ImportError:
                 # If not available, create a placeholder implementation
@@ -218,7 +250,7 @@ class DataPipelineTrigger:
                         self.logger.info(f"Placeholder: Collecting financial data for {self.symbol}:{self.exchange}")
                         
                         # Update data collection status
-                        from portfolio.portfolio_manager import PortfolioManager
+                        
                         portfolio_manager = PortfolioManager(self.db)
                         portfolio_manager.update_data_collection_status(self.symbol, self.exchange, "financial", True)
                         
@@ -232,7 +264,7 @@ class DataPipelineTrigger:
             # Check result
             if result:
                 # Update data collection status
-                from portfolio.portfolio_manager import PortfolioManager
+                
                 portfolio_manager = PortfolioManager(self.db)
                 portfolio_manager.update_data_collection_status(symbol, exchange, "financial", True)
                 
@@ -241,7 +273,7 @@ class DataPipelineTrigger:
                 self.logger.error(f"Failed to collect financial data for {symbol}:{exchange}")
                 
                 # Update data collection status with failure
-                from portfolio.portfolio_manager import PortfolioManager
+                
                 portfolio_manager = PortfolioManager(self.db)
                 portfolio_manager.update_data_collection_status(symbol, exchange, "financial", False)
             
@@ -250,7 +282,7 @@ class DataPipelineTrigger:
             
             # Update data collection status with failure
             try:
-                from portfolio.portfolio_manager import PortfolioManager
+                
                 portfolio_manager = PortfolioManager(self.db)
                 portfolio_manager.update_data_collection_status(symbol, exchange, "financial", False)
             except:
@@ -271,7 +303,7 @@ class DataPipelineTrigger:
             # Import necessary components
             try:
                 # First try to import the real implementation
-                from data.news.news_aggregator import NewsAggregator
+               
                 aggregator = NewsAggregator(self.db)
             except ImportError:
                 # If not available, create a placeholder implementation
@@ -286,7 +318,7 @@ class DataPipelineTrigger:
                         self.logger.info(f"Placeholder: Collecting news for {symbol}:{exchange}")
                         
                         # Update data collection status
-                        from portfolio.portfolio_manager import PortfolioManager
+                         
                         portfolio_manager = PortfolioManager(self.db)
                         portfolio_manager.update_data_collection_status(symbol, exchange, "news", True)
                         
@@ -302,7 +334,7 @@ class DataPipelineTrigger:
             # Check result
             if news_items is not None:
                 # Update data collection status
-                from portfolio.portfolio_manager import PortfolioManager
+                
                 portfolio_manager = PortfolioManager(self.db)
                 portfolio_manager.update_data_collection_status(symbol, exchange, "news", True)
                 
@@ -311,7 +343,7 @@ class DataPipelineTrigger:
                 self.logger.error(f"Failed to collect news data for {symbol}:{exchange}")
                 
                 # Update data collection status with failure
-                from portfolio.portfolio_manager import PortfolioManager
+                
                 portfolio_manager = PortfolioManager(self.db)
                 portfolio_manager.update_data_collection_status(symbol, exchange, "news", False)
             
@@ -320,7 +352,7 @@ class DataPipelineTrigger:
             
             # Update data collection status with failure
             try:
-                from portfolio.portfolio_manager import PortfolioManager
+               
                 portfolio_manager = PortfolioManager(self.db)
                 portfolio_manager.update_data_collection_status(symbol, exchange, "news", False)
             except:
@@ -342,7 +374,7 @@ class DataPipelineTrigger:
                 self.logger.warning(f"No sector specified for {symbol}:{exchange}, skipping global data collection")
                 
                 # Update data collection status (marked as complete since we're skipping)
-                from portfolio.portfolio_manager import PortfolioManager
+                
                 portfolio_manager = PortfolioManager(self.db)
                 portfolio_manager.update_data_collection_status(symbol, exchange, "global", True)
                 
@@ -353,11 +385,10 @@ class DataPipelineTrigger:
             # Import necessary components
             try:
                 # First try to import the real implementation
-                from data.global_markets.indices_collector import GlobalIndicesCollector
-                collector = GlobalIndicesCollector(self.db)
+                collector = IndicesCollector(self.db)
             except ImportError:
                 # If not available, create a placeholder implementation
-                self.logger.warning("GlobalIndicesCollector not available, using placeholder")
+                self.logger.warning("IndicesCollector not available, using placeholder")
                 
                 class PlaceholderCollector:
                     def __init__(self, db):
@@ -376,7 +407,7 @@ class DataPipelineTrigger:
             global_data = collector.collect_data(sector, days=days)
             
             # Update data collection status
-            from portfolio.portfolio_manager import PortfolioManager
+            
             portfolio_manager = PortfolioManager(self.db)
             portfolio_manager.update_data_collection_status(symbol, exchange, "global", True)
             
@@ -387,7 +418,7 @@ class DataPipelineTrigger:
             
             # Update data collection status with failure
             try:
-                from portfolio.portfolio_manager import PortfolioManager
+                
                 portfolio_manager = PortfolioManager(self.db)
                 portfolio_manager.update_data_collection_status(symbol, exchange, "global", False)
             except:
@@ -438,7 +469,7 @@ class DataPipelineTrigger:
             # Import necessary components
             try:
                 # First try to import the real implementation
-                from research.technical_analyzer import TechnicalAnalyzer
+                
                 analyzer = TechnicalAnalyzer(self.db)
             except ImportError:
                 # If not available, create a placeholder implementation
@@ -449,8 +480,8 @@ class DataPipelineTrigger:
                         self.db = db
                         self.logger = setup_logger("placeholder_analyzer")
                     
-                    def analyze(self, symbol, exchange, timeframes=None):
-                        timeframes = timeframes or ["day", "60min", "5min"]
+                    def analyze(self, symbol, exchange, timeframe=None):
+                        timeframe = timeframe or ["day", "60min", "5min"]
                         self.logger.info(f"Placeholder: Running technical analysis for {symbol}:{exchange}")
                         return {"status": "success"}
                 
@@ -485,7 +516,7 @@ class DataPipelineTrigger:
             # Import necessary components
             try:
                 # First try to import the real implementation
-                from research.fundamental_analyzer import FundamentalAnalyzer
+                
                 analyzer = FundamentalAnalyzer(self.db)
             except ImportError:
                 # If not available, create a placeholder implementation
@@ -528,7 +559,7 @@ class DataPipelineTrigger:
             # Import necessary components
             try:
                 # First try to import the real implementation
-                from research.sentiment_analyzer import SentimentAnalyzer
+                
                 analyzer = SentimentAnalyzer(self.db)
             except ImportError:
                 # If not available, create a placeholder implementation
@@ -573,7 +604,7 @@ class DataPipelineTrigger:
            # Import necessary components
            try:
                # First try to import the real implementation
-               from ml.prediction.daily_predictor import DailyPredictor
+               
                predictor = DailyPredictor(self.db)
            except ImportError:
                # If not available, create a placeholder implementation
@@ -586,9 +617,7 @@ class DataPipelineTrigger:
                    
                    def predict(self, symbol, exchange, timeframe="day"):
                        self.logger.info(f"Placeholder: Generating prediction for {symbol}:{exchange}")
-                       
-                       import random
-                       from database.models import PredictionData
+                      
                        
                        # Generate a random prediction
                        prediction = "up" if random.random() > 0.5 else "down"

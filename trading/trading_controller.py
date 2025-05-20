@@ -8,6 +8,8 @@ import os
 import signal
 import logging
 from datetime import datetime
+from trading.zerodha_manager import get_zerodha_connector, ensure_zerodha_connection
+from utils.logging_utils import setup_logger
 
 class TradingController:
     """
@@ -32,6 +34,27 @@ class TradingController:
             '.trading_pid'
         )
         
+        self.logger = setup_logger(__name__)
+        self.mode = mode
+        
+        # Initialize state
+        self.is_active = False
+        self.current_positions = {}
+        self.orders = {}
+        
+        # Initialize trading engine
+        self.engine = None
+        # Initialize market data connector
+        if mode == "live":
+            # Ensure Zerodha connection
+            if ensure_zerodha_connection():
+                self.zerodha_connector = get_zerodha_connector()
+            else:
+                self.zerodha_connector = None
+                self.logger.warning("Running without Zerodha connection, features will be limited")
+        else:
+            # In paper trading mode, we can use simulated connector
+            self.zerodha_connector = get_zerodha_connector()
         # Initialize market hours manager
         from trading.market_hours import MarketHours
         self.market_hours = MarketHours()
@@ -98,10 +121,24 @@ class TradingController:
         
         # Get active instruments if not specified
         if not instruments:
-            instruments = list(self.db.portfolio_collection.find({
-                "status": "active",
-                "trading_config.enabled": True
-            }))
+            try:
+                self.logger.info("Enabling trading for all active instruments")
+                result = self.db.update_many(
+                    "portfolio",
+                    {"status": "active"},
+                    {"$set": {"trading_config.enabled": True}}
+                )
+                self.logger.info(f"Enabled trading for {result} instruments")
+            except Exception as e:
+                self.logger.warning(f"Failed to update trading_config.enabled: {e}")
+            # Use the portfolio manager to get active instruments
+            from portfolio.portfolio_manager import PortfolioManager
+            portfolio_manager = PortfolioManager(self.db)
+            instruments = portfolio_manager.get_active_instruments()
+            self.logger.info(instruments)
+            
+            # Filter for trading_config.enabled = True
+            instruments = [i for i in instruments if i.get("trading_config", {}).get("enabled", False)]
         
         if not instruments:
             self.logger.warning("No active instruments found for trading")
@@ -318,8 +355,12 @@ class TradingController:
                 symbol=instrument["symbol"],
                 exchange=instrument["exchange"]
             )
-            
-            self.logger.info(f"Generated new prediction for {instrument['symbol']}: {prediction['prediction']} (confidence: {prediction['confidence']:.2f})")
+            # trading/trading_controller.py
+            # Around line 359
+            if prediction:
+                self.logger.info(f"Generated new prediction for {instrument['symbol']}: {prediction['prediction']} (confidence: {prediction['confidence']:.2f})")
+            else:
+                self.logger.warning(f"Failed to generate prediction for {instrument['symbol']}")
             
             return prediction
             

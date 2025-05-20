@@ -250,13 +250,20 @@ MONGODB_COLLECTIONS = {
     'financial': 'financial',
     'predictions': 'predictions',
     'trades': 'trades',
+    'positions': 'positions',
     'performance': 'performance',
     'system_logs': 'system_logs',
+    'financial_data': 'financial_data',
+    'global_market': 'global_market',
+    'sentiment': 'sentiment',
+    'features': 'features',
+    'ensemble_models': 'ensemble_models',
     'tasks': 'tasks',  # Add this line
     'conversations': 'conversations',  # For conversation management
     'notifications': 'notifications',  # For storing notification history
     'reports': 'reports' ,
     'financial_data_raw': 'financial_data_raw',  # Add this line 
+    'real_time_data': 'real_time_data',
     # For report storage
     # 'portfolio': 'portfolio',
     # 'market_data': 'market_data',

@@ -117,7 +117,7 @@ def generate_predictions(symbol=None, exchange=None, timeframe=None, all_instrum
             
             # Generate prediction
             try:
-                result = predictor.predict(symbol, exchange, timeframe=prediction_timeframe)
+                result = predictor.generate_prediction(symbol, exchange)
                 
                 if result:
                     prediction_count += 1

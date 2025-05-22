@@ -119,10 +119,19 @@ class SentimentFeatureGenerator:
             if for_date:
                 query["timestamp"] = {"$lte": for_date}
             
-            # Get data from database
+            # Convert lookback to integer more safely
+            if isinstance(lookback, (int, float)):
+                lookback_int = int(lookback)
+            elif isinstance(lookback, str) and lookback.isdigit():
+                lookback_int = int(lookback)
+            else:
+                # Use a default value if lookback is not a valid number
+                self.logger.warning(f"Invalid lookback value: {lookback}, using default of 30")
+                lookback_int = 30
+            
             data = list(self.db.sentiment_collection.find(
                 query
-            ).sort("timestamp", -1).limit(lookback))
+            ).sort("timestamp", -1).limit(lookback_int))
             
             if not data:
                 return None
@@ -131,7 +140,8 @@ class SentimentFeatureGenerator:
             df = pd.DataFrame(data)
             
             # Set timestamp as index
-            df = df.set_index("timestamp")
+            if 'timestamp' in df.columns:
+                df = df.set_index("timestamp")
             
             # Sort by timestamp
             df = df.sort_index()
@@ -139,7 +149,7 @@ class SentimentFeatureGenerator:
             return df
             
         except Exception as e:
-            self.logger.error(f"Error getting sentiment data: {str(e)}")
+            self.logger.error(f"Error getting sentiment data: {e}")
             return None
     
     def _add_sentiment_score_features(self, df_features, sentiment_data):

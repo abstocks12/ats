@@ -37,6 +37,7 @@ ZERODHA_API_SECRET = os.getenv('ZERODHA_API_SECRET', '')
 ZERODHA_USER_ID = os.getenv('ZERODHA_USER_ID', '')
 ZERODHA_USER_PASSWORD = os.getenv('ZERODHA_USER_PASSWORD', '')
 ZERODHA_TOTP_KEY = os.getenv('ZERODHA_TOTP_KEY', '')
+FMP_API_KEY = os.getenv('FMP_API_KEY')
 
 # WhatsApp settings
 WHATSAPP_ENABLED = os.getenv('WHATSAPP_ENABLED', 'False').lower() == 'true'
@@ -242,6 +243,8 @@ SECTOR_KEYWORDS = {
     ]
 }
 
+FMP_API_KEY = "your_api_key_here"
+
 # Default database collections
 MONGODB_COLLECTIONS = {
     'portfolio': 'portfolio',
@@ -264,7 +267,8 @@ MONGODB_COLLECTIONS = {
     'reports': 'reports' ,
     'financial_data_raw': 'financial_data_raw',  # Add this line 
     'real_time_data': 'real_time_data',
-    'data_collection_logs':'data_collection_logs'
+    'data_collection_logs':'data_collection_logs',
+    'models':'models'
     # For report storage
     # 'portfolio': 'portfolio',
     # 'market_data': 'market_data',

@@ -167,7 +167,7 @@ class DataPipelineTrigger:
                 collector = PlaceholderCollector(self.db)
             
             # Collect data for each timeframe
-            for timeframe in config.get("timeframes", ["day", "60min", "5min"]):
+            for timeframe in config.get("timeframes", ["day", "60min","30min", "15min", "5min", "1min"]):
                 try:
                     # Convert timeframe to collector format if needed
                     collector_timeframe = timeframe
@@ -485,14 +485,14 @@ class DataPipelineTrigger:
                         self.logger = setup_logger("placeholder_analyzer")
                     
                     def analyze(self, symbol, exchange, timeframe=None):
-                        timeframe = timeframe or ["day", "60min", "5min"]
+                        timeframe = timeframe or ["day", "60min","30min", "15min", "5min", "1min"]
                         self.logger.info(f"Placeholder: Running technical analysis for {symbol}:{exchange}")
                         return {"status": "success"}
                 
                 analyzer = PlaceholderAnalyzer(self.db)
             
             # Get timeframes from config
-            timeframes = config.get("timeframes", ["day", "60min", "5min"])
+            timeframes = config.get("timeframes", ["day", "60min","30min", "15min", "5min", "1min"])
             
             # Run technical analysis
             result = analyzer.analyze(symbol, exchange, timeframes=timeframes)

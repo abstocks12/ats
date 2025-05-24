@@ -1169,7 +1169,46 @@ class MongoDBConnector:
         except Exception as e:
             log_error(e, context={"action": "log_system_event"})
             return False
+    # Add this method to your MongoDBConnector class in mongodb_connector.py
 
+def get_financial_data_for_features(self, symbol, exchange, start_date=None, end_date=None):
+    """
+    Get financial data for feature generation
+    
+    Args:
+        symbol (str): Instrument symbol
+        exchange (str): Exchange code
+        start_date (datetime, optional): Start date
+        end_date (datetime, optional): End date
+        
+    Returns:
+        list: List of financial data documents
+    """
+    query = {
+        "symbol": symbol,
+        "exchange": exchange
+    }
+    
+    # Add date range if provided
+    if start_date or end_date:
+        query["report_date"] = {}
+        
+        if start_date:
+            query["report_date"]["$gte"] = start_date
+        
+        if end_date:
+            query["report_date"]["$lte"] = end_date
+    
+    try:
+        return self.find(
+            collection_name="financial",
+            query=query,
+            sort=[("report_date", pymongo.DESCENDING)]
+        )
+    except Exception as e:
+        self.logger.error(f"Error getting financial data: {e}")
+        return []
+    
     def get_system_logs(self, event_type=None, start_date=None, end_date=None, limit=100):
         """
         Get system logs

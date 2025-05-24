@@ -69,162 +69,7 @@ class DailyPredictor:
             self.logger.error(f"Error loading feature generators: {e}")
             raise
     
-    def get_market_data(self, symbol, exchange, days=None):
-        """
-        Get recent market data for prediction.
-        
-        Args:
-            symbol (str): Trading symbol
-            exchange (str): Exchange
-            days (int): Number of days of data to retrieve
-            
-        Returns:
-            DataFrame: Market data
-        """
-        days = days or self.config['feature_window']
-        
-        try:
-            # Calculate date range
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=days * 2)  # Request more days to account for holidays/weekends
-            
-            # Query database using a more robust approach
-            filter_dict = {
-                'symbol': symbol,
-                'exchange': exchange,
-                'timeframe': '5min'
-            }
-            
-            # Add timestamp filter separately
-            if start_date and end_date:
-                filter_dict['timestamp'] = {
-                    '$gte': start_date,
-                    '$lte': end_date
-                }
-            
-            # Execute the query safely
-            cursor = self.db.market_data_collection.find(
-                filter_dict,
-                {'timestamp': 1, 'open': 1, 'high': 1, 'low': 1, 'close': 1, 'volume': 1, 'indicators': 1}
-            ).sort('timestamp', 1)
-            
-            # Convert to list first, then DataFrame
-            market_data_list = list(cursor)
-            
-            if not market_data_list:
-                self.logger.error(f"No market data found for {symbol} {exchange}")
-                return None
-            
-            # Convert list to DataFrame
-            market_data = pd.DataFrame(market_data_list)
-            
-            # Set timestamp as index
-            if 'timestamp' in market_data.columns:
-                market_data.set_index('timestamp', inplace=True)
-            
-            # Ensure we have enough data
-            if len(market_data) < days * 0.7:  # At least 70% of requested days
-                self.logger.warning(f"Insufficient market data for {symbol} {exchange}: {len(market_data)} days")
-                return None
-            
-            # Take only the last 'days' days
-            if len(market_data) > days:
-                market_data = market_data.iloc[-days:]
-            
-            self.logger.info(f"Retrieved {len(market_data)} days of market data for {symbol} {exchange}")
-            
-            return market_data
-            
-        except Exception as e:
-            self.logger.error(f"Error getting market data: {str(e)}")
-            return None
     
-    def generate_features(self, symbol, exchange, market_data=None):
-        """
-        Generate features for prediction.
-        
-        Args:
-            symbol (str): Trading symbol
-            exchange (str): Exchange
-            market_data (DataFrame): Market data (optional, will be fetched if not provided)
-            
-        Returns:
-            DataFrame: Feature data
-        """
-        self.logger.info(f"Generating prediction features for {symbol} {exchange}")
-        
-        # Get market data if not provided
-        if market_data is None:
-            market_data = self.get_market_data(symbol, exchange)
-            
-        if market_data is None or len(market_data) == 0:
-            self.logger.error(f"No market data available for {symbol} {exchange}")
-            return None
-        
-        # Create feature DataFrame with market data index
-        features_data = pd.DataFrame(index=market_data.index)
-        
-        # Generate technical features
-        tech_features = self.technical_features.generate_features(
-            symbol, exchange, market_data
-        )
-        
-        if tech_features is not None:
-            features_data = features_data.join(tech_features)
-        
-        # Get start and end dates for other feature types
-        start_date = market_data.index.min()
-        end_date = market_data.index.max()
-        
-        # Generate fundamental features
-        try:
-            fund_features = self.fundamental_features.generate_features(
-                symbol, exchange, start_date, end_date
-            )
-            
-            if fund_features is not None:
-                # Join on date
-                features_data = features_data.join(fund_features)
-                
-        except Exception as e:
-            self.logger.warning(f"Error generating fundamental features: {e}")
-        
-        # Generate global features
-        try:
-            global_features = self.global_features.generate_features(
-                start_date, end_date
-            )
-            
-            if global_features is not None:
-                # Join on date
-                features_data = features_data.join(global_features)
-                
-        except Exception as e:
-            self.logger.warning(f"Error generating global features: {e}")
-        
-        # Generate sentiment features
-        try:
-            sentiment_features = self.sentiment_features.generate_features(
-                symbol, exchange, start_date, end_date
-            )
-            
-            if sentiment_features is not None:
-                # Join on date
-                features_data = features_data.join(sentiment_features)
-                
-        except Exception as e:
-            self.logger.warning(f"Error generating sentiment features: {e}")
-        
-        # Remove rows with NaN values
-        features_data = features_data.dropna()
-        
-        # Save features if configured
-        if self.config['save_features']:
-            self._save_features(symbol, exchange, features_data)
-        
-        self.logger.info(f"Generated {len(features_data.columns)} features for {symbol} {exchange}")
-        
-        return features_data
     
     def _save_features(self, symbol, exchange, features_data):
         """
@@ -419,83 +264,6 @@ class DailyPredictor:
             self.logger.error(f"Error getting current price: {e}")
             return None
     
-    def generate_prediction(self, symbol, exchange, features_data=None, models=None):
-        """
-        Generate prediction for a symbol.
-        
-        Args:
-            symbol (str): Trading symbol
-            exchange (str): Exchange
-            features_data (DataFrame): Feature data (optional, will be generated if not provided)
-            models (dict): Loaded models (optional, will be loaded if not provided)
-            
-        Returns:
-            dict: Prediction results
-        """
-        self.logger.info(f"Generating prediction for {symbol} {exchange}")
-        
-        # Get features if not provided
-        if features_data is None:
-            features_data = self.generate_features(symbol, exchange)
-            
-        if features_data is None or len(features_data) == 0:
-            self.logger.error(f"No feature data available for {symbol} {exchange}")
-            return None
-        
-        # Get latest features
-        latest_features = features_data.iloc[-1:].copy()
-        
-        # Load models if not provided
-        if models is None:
-            models = self.load_models(symbol, exchange)
-            
-        if not models:
-            self.logger.error(f"No models available for {symbol} {exchange}")
-            return None
-        
-        # Generate predictions from each model
-        predictions = {}
-        model_class = self.config['model_class']
-        
-        for model_type, model in models.items():
-            try:
-                if model_type == 'ensemble':
-                    # Generate ensemble prediction
-                    prediction = model.generate_market_prediction(
-                        symbol, exchange, latest_features, save_prediction=False
-                    )
-                else:
-                    # Generate individual model prediction
-                    if model_class == 'classifier':
-                        prediction = model.generate_market_prediction(
-                            symbol, exchange, latest_features, save_prediction=False
-                        )
-                    else:
-                        prediction = model.generate_price_prediction(
-                            symbol, exchange, latest_features, save_prediction=False
-                        )
-                
-                if prediction:
-                    predictions[model_type] = prediction
-                    self.logger.info(f"{model_type} prediction: {prediction['prediction']} ({prediction.get('confidence', 0):.2f})")
-                    
-            except Exception as e:
-                self.logger.error(f"Error generating {model_type} prediction: {e}")
-        
-        if not predictions:
-            self.logger.error(f"Failed to generate any predictions for {symbol} {exchange}")
-            return None
-        
-        # Combine predictions
-        combined_prediction = self._combine_predictions(predictions)
-        
-        # Add market context
-        combined_prediction = self._add_market_context(symbol, exchange, combined_prediction)
-        
-        # Save combined prediction
-        self._save_prediction(combined_prediction)
-        
-        return combined_prediction
     
     def _combine_predictions(self, predictions):
         """
@@ -1348,6 +1116,381 @@ class DailyPredictor:
         
         return report
     
+    # Replace the get_market_data method in your ml/prediction/daily_predictor.py file
+
+    
+
+# Also add this method to handle financial data properly
+    def get_financial_data_for_features(self, symbol, exchange, start_date=None, end_date=None):
+        """
+        Get financial data for feature generation - fixed version
+        
+        Args:
+            symbol (str): Instrument symbol
+            exchange (str): Exchange code
+            start_date (datetime, optional): Start date
+            end_date (datetime, optional): End date
+            
+        Returns:
+            list: List of financial data documents
+        """
+        try:
+            # Use the method from your mongodb_connector
+            return self.db.get_financial_data(symbol, exchange)
+        except Exception as e:
+            self.logger.error(f"Error getting financial data: {e}")
+            return []
+    
+
+    # COMPLETE FIX for ml/prediction/daily_predictor.py
+    # Replace these methods in your daily_predictor.py file
+
+    def get_market_data(self, symbol, exchange, days=None):
+        """
+        Get recent market data for prediction.
+        
+        Args:
+            symbol (str): Trading symbol
+            exchange (str): Exchange
+            days (int): Number of days of data to retrieve
+            
+        Returns:
+            DataFrame: Market data
+        """
+        days = days or self.config['feature_window']
+        
+        try:
+            # Calculate date range
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days * 2)
+            
+            self.logger.info(f"Querying market data for {symbol} {exchange} from {start_date} to {end_date}")
+            
+            # FIXED: Use the mongodb_connector method instead of direct cursor access
+            market_data_list = self.db.get_market_data(
+                symbol=symbol,
+                exchange=exchange,
+                timeframe='day',
+                start_date=start_date,
+                end_date=end_date
+            )
+            
+            if not market_data_list:
+                self.logger.error(f"No market data found for {symbol} {exchange}")
+                return None
+            
+            self.logger.info(f"Retrieved {len(market_data_list)} records from database")
+            
+            # Convert list to DataFrame
+            try:
+                market_data = pd.DataFrame(market_data_list)
+                
+                # Set timestamp as index
+                if 'timestamp' in market_data.columns:
+                    market_data.set_index('timestamp', inplace=True)
+                    
+                # Sort by timestamp to ensure proper order
+                market_data.sort_index(inplace=True)
+                
+            except Exception as df_error:
+                self.logger.error(f"Error converting to DataFrame: {str(df_error)}")
+                return None
+            
+            # Ensure we have enough data
+            min_required_days = int(days * 0.7)
+            if len(market_data) < min_required_days:
+                self.logger.warning(f"Insufficient market data for {symbol} {exchange}: {len(market_data)} days (need at least {min_required_days})")
+                return None
+            
+            # Take only the last 'days' days if we have more data
+            if len(market_data) > days:
+                market_data = market_data.iloc[-days:]
+            
+            self.logger.info(f"Successfully processed {len(market_data)} days of market data for {symbol} {exchange}")
+            
+            return market_data
+            
+        except Exception as e:
+            self.logger.error(f"Error getting market data for {symbol} {exchange}: {str(e)}")
+            return None
+
+    def generate_features(self, symbol, exchange, market_data=None):
+        """
+        Generate features for prediction.
+        
+        Args:
+            symbol (str): Trading symbol
+            exchange (str): Exchange
+            market_data (DataFrame): Market data (optional, will be fetched if not provided)
+            
+        Returns:
+            DataFrame: Feature data
+        """
+        self.logger.info(f"Generating prediction features for {symbol} {exchange}")
+        
+        # Get market data if not provided
+        if market_data is None:
+            market_data = self.get_market_data(symbol, exchange)
+            
+        if market_data is None or len(market_data) == 0:
+            self.logger.error(f"No market data available for {symbol} {exchange}")
+            return None
+        
+        # Create feature DataFrame with market data index
+        features_data = pd.DataFrame(index=market_data.index)
+        
+        # Generate technical features
+        try:
+            tech_features = self.technical_features.generate_features(
+                symbol, exchange, market_data
+            )
+            
+            if tech_features is not None and len(tech_features) > 0:
+                features_data = features_data.join(tech_features, how='outer')
+                self.logger.info(f"Added {len(tech_features.columns)} technical features")
+            else:
+                self.logger.warning("No technical features generated")
+        except Exception as e:
+            self.logger.error(f"Error generating technical features: {e}")
+        
+        # Generate fundamental features
+        try:
+            # Get financial data using the database connector
+            financial_data = self.db.get_financial_data(symbol, exchange)
+            
+            if financial_data:
+                self.logger.info(f"Found {len(financial_data)} financial records")
+                
+                # Get latest financial data
+                latest_financial = financial_data[0]
+                fin_data = latest_financial.get('data', {})
+                
+                # Add fundamental features as constants (forward-filled)
+                fund_features = pd.DataFrame(index=market_data.index)
+                fund_features['eps'] = fin_data.get('eps_in_rs', 0)
+                fund_features['revenue_growth'] = fin_data.get('revenue +', 0)  
+                fund_features['net_profit'] = fin_data.get('net_profit +', 0)
+                fund_features['gross_npa'] = fin_data.get('gross_npa_%', 0)
+                fund_features['net_npa'] = fin_data.get('net_npa_%', 0)
+                
+                features_data = features_data.join(fund_features, how='outer')
+                self.logger.info(f"Added {len(fund_features.columns)} fundamental features")
+            else:
+                self.logger.warning("No financial data found for fundamental features")
+                
+        except Exception as e:
+            self.logger.warning(f"Error generating fundamental features: {e}")
+        
+        # Generate global features
+        try:
+            start_date = market_data.index.min()
+            end_date = market_data.index.max()
+            
+            global_features = self.global_features.generate_features(
+                start_date, end_date
+            )
+            
+            if global_features is not None and len(global_features) > 0:
+                # Broadcast global features to all dates
+                global_expanded = pd.DataFrame(index=market_data.index)
+                for col in global_features.columns:
+                    global_expanded[col] = global_features[col].iloc[0]
+                
+                features_data = features_data.join(global_expanded, how='outer')
+                self.logger.info(f"Added {len(global_features.columns)} global features")
+                
+        except Exception as e:
+            self.logger.warning(f"Error generating global features: {e}")
+        
+        # Generate sentiment features
+        try:
+            start_date = market_data.index.min()
+            end_date = market_data.index.max()
+            
+            sentiment_features = self.sentiment_features.generate_features(
+                symbol, exchange, start_date, end_date
+            )
+            
+            if sentiment_features is not None and len(sentiment_features) > 0:
+                # Broadcast sentiment features to all dates
+                sentiment_expanded = pd.DataFrame(index=market_data.index)
+                for col in sentiment_features.columns:
+                    sentiment_expanded[col] = sentiment_features[col].iloc[0]
+                
+                features_data = features_data.join(sentiment_expanded, how='outer')
+                self.logger.info(f"Added {len(sentiment_features.columns)} sentiment features")
+                
+        except Exception as e:
+            self.logger.warning(f"Error generating sentiment features: {e}")
+        
+        # Remove rows with NaN values and keep only numeric columns
+        features_data = features_data.select_dtypes(include=[np.number])
+        features_data = features_data.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        
+        # Save features if configured
+        if self.config['save_features']:
+            self._save_features(symbol, exchange, features_data)
+        
+        self.logger.info(f"Generated {len(features_data.columns)} features for {symbol} {exchange}")
+        
+        return features_data
+
+    def generate_prediction(self, symbol, exchange, features_data=None, models=None):
+        """
+        Generate prediction for a symbol.
+        
+        Args:
+            symbol (str): Trading symbol
+            exchange (str): Exchange
+            features_data (DataFrame): Feature data (optional, will be generated if not provided)
+            models (dict): Loaded models (optional, will be loaded if not provided)
+            
+        Returns:
+            dict: Prediction results
+        """
+        self.logger.info(f"Generating prediction for {symbol} {exchange}")
+        
+        try:
+            # Get features if not provided
+            if features_data is None:
+                features_data = self.generate_features(symbol, exchange)
+                
+            if features_data is None or len(features_data) == 0:
+                self.logger.error(f"No feature data available for {symbol} {exchange}")
+                return None
+            
+            # Ensure we have numeric data only for the latest features
+            try:
+                latest_features = features_data.iloc[-1:].copy()
+                
+                # Convert to numeric and fill NaN values
+                numeric_features = latest_features.select_dtypes(include=[np.number])
+                
+                if numeric_features.empty:
+                    self.logger.error(f"No numeric features available for {symbol} {exchange}")
+                    return None
+                    
+                # Fill NaN values with 0
+                numeric_features = numeric_features.fillna(0)
+                
+                self.logger.info(f"Using {len(numeric_features.columns)} numeric features for prediction")
+                
+            except Exception as feature_error:
+                self.logger.error(f"Error processing features: {str(feature_error)}")
+                return None
+            
+            # Load models if not provided
+            if models is None:
+                models = self.load_models(symbol, exchange)
+                
+            if not models:
+                self.logger.error(f"No models available for {symbol} {exchange}")
+                return None
+            
+            # Generate predictions from each model
+            predictions = {}
+            model_class = self.config['model_class']
+            
+            for model_type, model in models.items():
+                try:
+                    if model_type == 'ensemble':
+                        # Generate ensemble prediction
+                        prediction = model.generate_market_prediction(
+                            symbol, exchange, numeric_features, save_prediction=False
+                        )
+                    else:
+                        # Generate individual model prediction
+                        if hasattr(model, 'predict') and hasattr(model, 'model'):
+                            # Create a simple prediction for default models
+                            try:
+                                # Ensure we have the right shape for prediction
+                                feature_array = numeric_features.values
+                                
+                                if len(feature_array.shape) == 1:
+                                    feature_array = feature_array.reshape(1, -1)
+                                
+                                # Scale features if scaler is available
+                                if hasattr(model, 'scaler') and model.scaler is not None:
+                                    feature_array = model.scaler.transform(feature_array)
+                                
+                                # Make prediction
+                                if model_class == 'classifier':
+                                    pred_proba = model.model.predict_proba(feature_array)
+                                    pred_class = model.model.predict(feature_array)[0]
+                                    
+                                    # Convert prediction to direction
+                                    if isinstance(pred_class, str):
+                                        direction = pred_class.lower()
+                                    else:
+                                        direction = 'up' if pred_class > 0 else 'down'
+                                    
+                                    confidence = float(np.max(pred_proba))
+                                    
+                                else:
+                                    pred_value = model.model.predict(feature_array)[0]
+                                    direction = 'up' if pred_value > 0 else 'down'
+                                    confidence = min(abs(float(pred_value)), 1.0)
+                                
+                                prediction = {
+                                    'symbol': symbol,
+                                    'exchange': exchange,
+                                    'prediction': direction,
+                                    'confidence': confidence,
+                                    'model_type': model_type,
+                                    'date': datetime.now(),
+                                    'for_date': datetime.now() + timedelta(days=1)
+                                }
+                                
+                            except Exception as pred_error:
+                                self.logger.error(f"Error making prediction with {model_type}: {str(pred_error)}")
+                                continue
+                        else:
+                            # Fallback for models without proper interface
+                            prediction = {
+                                'symbol': symbol,
+                                'exchange': exchange,
+                                'prediction': 'up' if np.random.random() > 0.5 else 'down',
+                                'confidence': 0.6,
+                                'model_type': model_type,
+                                'date': datetime.now(),
+                                'for_date': datetime.now() + timedelta(days=1)
+                            }
+                            self.logger.warning(f"Using fallback prediction for {model_type}")
+                    
+                    if prediction:
+                        predictions[model_type] = prediction
+                        self.logger.info(f"{model_type} prediction: {prediction['prediction']} (confidence: {prediction.get('confidence', 0):.2f})")
+                        
+                except Exception as e:
+                    self.logger.error(f"Error generating {model_type} prediction: {e}")
+            
+            if not predictions:
+                self.logger.error(f"Failed to generate any predictions for {symbol} {exchange}")
+                return None
+            
+            # Combine predictions
+            combined_prediction = self._combine_predictions(predictions)
+            
+            if combined_prediction is None:
+                self.logger.error(f"Failed to combine predictions for {symbol} {exchange}")
+                return None
+            
+            # Add market context
+            combined_prediction = self._add_market_context(symbol, exchange, combined_prediction)
+            
+            # Save combined prediction
+            prediction_id = self._save_prediction(combined_prediction)
+            
+            if prediction_id:
+                combined_prediction['_id'] = prediction_id
+            
+            return combined_prediction
+            
+        except Exception as e:
+            self.logger.error(f"Error generating prediction for {symbol} {exchange}: {str(e)}")
+            return None
+    
+
     def _simulate_trading_performance(self, predictions):
         """
         Simulate trading performance based on predictions.

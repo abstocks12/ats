@@ -55,49 +55,17 @@ def generate_predictions(symbol=None, exchange=None, timeframe=None, all_instrum
             logger.error("No instruments specified. Use --symbol and --exchange or --all")
             return False
         
-        # Import necessary components for prediction
+        # Import prediction components
         try:
             from ml.prediction.daily_predictor import DailyPredictor
-            predictor = DailyPredictor(db)
-        except ImportError:
-            # If not available, create a placeholder implementation
-            logger.warning("DailyPredictor not available, using placeholder")
-            
-            class PlaceholderPredictor:
-                def __init__(self, db):
-                    self.db = db
-                    self.logger = setup_logger("placeholder_predictor")
-                
-                def predict(self, symbol, exchange, timeframe="day"):
-                    self.logger.info(f"Placeholder: Generating prediction for {symbol}:{exchange}")
-                    
-                    import random
-                    from database.models import PredictionData
-                    
-                    # Generate a random prediction
-                    prediction = "up" if random.random() > 0.5 else "down"
-                    confidence = random.uniform(0.6, 0.9)
-                    
-                    # Create prediction data
-                    prediction_data = PredictionData(
-                        symbol=symbol,
-                        exchange=exchange,
-                        date=datetime.now(),
-                        prediction=prediction,
-                        confidence=confidence,
-                        timeframe=timeframe,
-                        supporting_factors=[
-                            {"factor": "placeholder", "weight": 1.0}
-                        ],
-                        model_id="placeholder_model"
-                    )
-                    
-                    # Save to database
-                    self.db.save_prediction(prediction_data.to_dict())
-                    
-                    return prediction_data.to_dict()
-            
-            predictor = PlaceholderPredictor(db)
+            predictor = DailyPredictor(db, logger)
+            logger.info("DailyPredictor loaded successfully")
+        except ImportError as e:
+            logger.error(f"Failed to import DailyPredictor: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error initializing DailyPredictor: {e}")
+            return False
         
         # Generate predictions for each instrument
         prediction_count = 0
@@ -106,22 +74,17 @@ def generate_predictions(symbol=None, exchange=None, timeframe=None, all_instrum
             symbol = instrument['symbol']
             exchange = instrument['exchange']
             
-            # Determine timeframe if not provided
-            prediction_timeframe = timeframe
-            if not prediction_timeframe:
-                # Use the instrument's trading timeframe
-                prediction_timeframe = instrument.get('trading_config', {}).get('timeframe', 'day')
-                # Convert trading timeframe to prediction timeframe
-                if prediction_timeframe == 'intraday':
-                    prediction_timeframe = 'day'
-            
             # Generate prediction
             try:
+                logger.info(f"Starting prediction generation for {symbol}:{exchange}")
+                
                 result = predictor.generate_prediction(symbol, exchange)
                 
                 if result:
                     prediction_count += 1
-                    logger.info(f"Generated {prediction_timeframe} prediction for {symbol}:{exchange}: {result.get('prediction', 'unknown')} (confidence: {result.get('confidence', 0):.2f})")
+                    pred_direction = result.get('prediction', 'unknown')
+                    confidence = result.get('confidence', 0)
+                    logger.info(f"Generated prediction for {symbol}:{exchange}: {pred_direction} (confidence: {confidence:.2f})")
                 else:
                     logger.error(f"Failed to generate prediction for {symbol}:{exchange}")
             except Exception as e:

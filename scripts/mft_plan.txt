@@ -1,0 +1,1189 @@
+# **Medium Frequency Trading (MFT) System - Complete Implementation Plan v2.0**
+
+## **System Overview**
+
+A streamlined MFT system designed for 15-30 minute trading cycles on NSE stocks, focusing on technical analysis, efficient execution, and real-time Slack communication. This plan is designed to be used across multiple Claude sessions for consistent code generation.
+
+## **Core Requirements**
+
+- **Trading Frequency**: 15-30 minute holding periods
+- **Capital**: ₹5,00,000 (5 lakhs)
+- **Target Return**: 0.5-1% daily (after costs)
+- **Risk Management**: Max 0.3% loss per trade, 1% daily loss limit
+- **Communication**: Real-time Slack integration for signals, alerts, and reports
+- **Automation**: Fully automated trading with manual override capabilities
+
+## **Complete System Architecture**
+
+```
+mft_trading_system/
+├── config/
+│   ├── __init__.py
+│   ├── settings.py              # System configuration
+│   ├── trading_params.py        # Trading parameters
+│   ├── slack_config.py          # Slack configuration
+│   ├── constants.py             # System constants
+│   └── symbols.json             # Active symbols list
+│
+├── database/
+│   ├── __init__.py
+│   ├── mongodb_handler.py       # MongoDB connection manager
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── trade_models.py      # Trade, Order schemas
+│   │   ├── market_models.py     # Market data, Microstructure schemas
+│   │   ├── position_models.py   # Positions, Signals schemas
+│   │   ├── risk_models.py       # Risk metrics schemas
+│   │   ├── system_models.py     # System state, Health schemas
+│   │   └── analytics_models.py  # Performance, Attribution schemas
+│   └── indexes.py               # Database index definitions
+│
+├── data/
+│   ├── __init__.py
+│   ├── market_data.py           # Real-time data handler
+│   ├── data_processor.py        # Candle formation & indicators
+│   ├── market_depth.py          # Order book analysis
+│   ├── candle_former.py         # 1-min candle creation
+│   └── kite_connector.py        # Zerodha API wrapper
+│
+├── analysis/
+│   ├── __init__.py
+│   ├── pre_market_scanner.py    # Pre-market analysis
+│   ├── symbol_selector.py       # Dynamic symbol selection
+│   ├── market_regime.py         # Market regime detection
+│   └── performance_attribution.py # P&L attribution
+│
+├── strategies/
+│   ├── __init__.py
+│   ├── base_strategy.py         # Abstract strategy class
+│   ├── vwap_reversion.py        # VWAP mean reversion
+│   ├── opening_range.py         # ORB strategy
+│   ├── momentum_breakout.py     # Momentum strategy
+│   └── rsi_divergence.py        # RSI divergence
+│
+├── execution/
+│   ├── __init__.py
+│   ├── order_manager.py         # Order placement/management
+│   ├── position_tracker.py      # Track open positions
+│   ├── risk_manager.py          # Risk controls
+│   ├── smart_executor.py        # Execution algorithms
+│   └── circuit_breaker.py       # Emergency controls
+│
+├── watchlist/
+│   ├── __init__.py
+│   ├── watchlist_manager.py     # Manage trading symbols
+│   └── symbol_filter.py         # Filter criteria
+│
+├── communication/
+│   ├── __init__.py
+│   ├── slack_connector.py       # Slack API integration
+│   ├── slack_formatter.py       # Message formatting
+│   ├── slack_commands.py        # Command handler
+│   └── alert_manager.py         # Alert routing
+│
+├── monitoring/
+│   ├── __init__.py
+│   ├── performance_tracker.py   # Track P&L, metrics
+│   ├── system_monitor.py        # System health monitoring
+│   ├── latency_monitor.py       # Execution latency tracking
+│   └── dashboard.py             # Live monitoring UI
+│
+├── recovery/
+│   ├── __init__.py
+│   ├── error_handler.py         # Error handling
+│   ├── connection_recovery.py   # Connection management
+│   ├── state_manager.py         # System state persistence
+│   └── failover_manager.py      # Failover procedures
+│
+├── utils/
+│   ├── __init__.py
+│   ├── logger.py                # Logging system
+│   ├── time_utils.py            # Market hours handling
+│   ├── calculations.py          # Common calculations
+│   ├── validators.py            # Input validation
+│   └── decorators.py            # Common decorators
+│
+├── backtest/
+│   ├── __init__.py
+│   ├── engine.py                # Backtesting engine
+│   ├── analyzer.py              # Performance analysis
+│   └── optimizer.py             # Parameter optimization
+│
+├── scripts/
+│   ├── __init__.py
+│   ├── start_trading.py         # Start the system
+│   ├── stop_trading.py          # Stop trading
+│   ├── add_symbol.py            # Add trading symbol
+│   ├── remove_symbol.py         # Remove symbol
+│   ├── daily_report.py          # Generate reports
+│   ├── system_check.py          # Pre-market system check
+│   └── emergency_exit.py        # Emergency position exit
+│
+├── tests/
+│   ├── __init__.py
+│   ├── unit/                    # Unit tests
+│   ├── integration/             # Integration tests
+│   └── fixtures/                # Test data
+│
+├── logs/                         # Log files directory
+├── docs/                         # Documentation
+├── requirements.txt
+├── docker-compose.yml            # Docker configuration
+├── .env.example                  # Environment variables template
+├── .gitignore
+├── README.md
+└── main.py                       # Main entry point
+```
+
+## **Database Schema (MongoDB)**
+
+### **1. trades Collection**
+```javascript
+{
+  "_id": ObjectId(),
+  "trade_id": "TRD_20240115_001",
+  "symbol": "TATASTEEL",
+  "exchange": "NSE",
+  "entry_time": ISODate("2024-01-15T10:30:00"),
+  "exit_time": ISODate("2024-01-15T10:45:00"),
+  "entry_price": 150.50,
+  "exit_price": 151.25,
+  "quantity": 500,
+  "trade_type": "LONG",
+  "strategy": "VWAP_REVERSION",
+  "pnl": 375,
+  "pnl_percent": 0.498,
+  "commission": 40,
+  "slippage": 10,
+  "net_pnl": 325,
+  "exit_reason": "TARGET_HIT",
+  "entry_signals": {
+    "vwap_distance": -0.8,
+    "rsi": 28.5,
+    "volume_spike": 1.8,
+    "signal_strength": 85
+  },
+  "execution_metrics": {
+    "entry_delay_ms": 150,
+    "exit_delay_ms": 120,
+    "entry_slippage_pct": 0.02,
+    "exit_slippage_pct": 0.01
+  }
+}
+```
+
+### **2. orders Collection**
+```javascript
+{
+  "_id": ObjectId(),
+  "order_id": "240115000123456",
+  "parent_order_id": null,
+  "symbol": "TATASTEEL",
+  "exchange": "NSE",
+  "order_type": "LIMIT",
+  "transaction_type": "BUY",
+  "product": "MIS",
+  "quantity": 500,
+  "price": 150.50,
+  "trigger_price": null,
+  "status": "COMPLETE",
+  "status_message": null,
+  "filled_quantity": 500,
+  "average_price": 150.48,
+  "placed_at": ISODate("2024-01-15T10:30:00"),
+  "updated_at": ISODate("2024-01-15T10:30:05"),
+  "order_tag": "VWAP_REVERSION_ENTRY",
+  "fill_details": [
+    {
+      "quantity": 300,
+      "price": 150.45,
+      "timestamp": ISODate("2024-01-15T10:30:02")
+    },
+    {
+      "quantity": 200,
+      "price": 150.52,
+      "timestamp": ISODate("2024-01-15T10:30:03")
+    }
+  ]
+}
+```
+
+### **3. positions Collection**
+```javascript
+{
+  "_id": ObjectId(),
+  "position_id": "POS_20240115_001",
+  "symbol": "TATASTEEL",
+  "exchange": "NSE",
+  "quantity": 500,
+  "average_price": 150.50,
+  "current_price": 150.75,
+  "entry_time": ISODate("2024-01-15T10:30:00"),
+  "strategy": "VWAP_REVERSION",
+  "status": "OPEN",
+  "side": "LONG",
+  "unrealized_pnl": 125,
+  "unrealized_pnl_percent": 0.166,
+  "peak_pnl": 200,
+  "trough_pnl": -50,
+  "stop_loss": 150.05,
+  "target": 151.25,
+  "trailing_stop_active": false,
+  "time_in_position": 5,
+  "capital_allocated": 75250,
+  "order_ids": {
+    "entry": "240115000123456",
+    "stop_loss": "240115000123457",
+    "target": "240115000123458"
+  },
+  "risk_metrics": {
+    "position_risk": 225,
+    "risk_reward_ratio": 1.67,
+    "volatility_adjusted_size": 500
+  }
+}
+```
+
+### **4. market_data Collection**
+```javascript
+{
+  "_id": ObjectId(),
+  "symbol": "TATASTEEL",
+  "exchange": "NSE",
+  "timestamp": ISODate("2024-01-15T10:30:00"),
+  "timeframe": "1min",
+  "open": 150.20,
+  "high": 150.80,
+  "low": 150.10,
+  "close": 150.50,
+  "volume": 125000,
+  "indicators": {
+    "vwap": 150.45,
+    "rsi_14": 45.2,
+    "ema_9": 150.35,
+    "ema_21": 150.28,
+    "atr_14": 2.5,
+    "volume_ma_20": 98000,
+    "bb_upper": 151.20,
+    "bb_lower": 149.80,
+    "bb_middle": 150.50,
+    "macd": 0.12,
+    "macd_signal": 0.08,
+    "macd_histogram": 0.04
+  }
+}
+```
+
+### **5. market_microstructure Collection**
+```javascript
+{
+  "_id": ObjectId(),
+  "symbol": "TATASTEEL",
+  "timestamp": ISODate("2024-01-15T10:30:00"),
+  "bid": 150.45,
+  "ask": 150.50,
+  "bid_size": 5000,
+  "ask_size": 3000,
+  "spread": 0.05,
+  "spread_percent": 0.033,
+  "depth": {
+    "buy": [
+      {"price": 150.45, "quantity": 5000, "orders": 12},
+      {"price": 150.40, "quantity": 8000, "orders": 18},
+      {"price": 150.35, "quantity": 12000, "orders": 25},
+      {"price": 150.30, "quantity": 15000, "orders": 30},
+      {"price": 150.25, "quantity": 18000, "orders": 35}
+    ],
+    "sell": [
+      {"price": 150.50, "quantity": 3000, "orders": 8},
+      {"price": 150.55, "quantity": 6000, "orders": 15},
+      {"price": 150.60, "quantity": 9000, "orders": 22},
+      {"price": 150.65, "quantity": 12000, "orders": 28},
+      {"price": 150.70, "quantity": 15000, "orders": 32}
+    ]
+  },
+  "order_imbalance": 0.625,
+  "tick_direction": "UP",
+  "trade_intensity": 1.8
+}
+```
+
+### **6. trading_signals Collection**
+```javascript
+{
+  "_id": ObjectId(),
+  "signal_id": "SIG_20240115_001",
+  "symbol": "TATASTEEL",
+  "timestamp": ISODate("2024-01-15T10:30:00"),
+  "strategy": "VWAP_REVERSION",
+  "signal_type": "ENTRY",
+  "direction": "LONG",
+  "strength": 75,
+  "executed": true,
+  "execution_time": ISODate("2024-01-15T10:30:02"),
+  "execution_order_id": "240115000123456",
+  "indicators": {
+    "price": 150.50,
+    "vwap": 151.20,
+    "vwap_distance": -0.58,
+    "rsi": 28.5,
+    "volume_spike": 1.8,
+    "atr": 2.5
+  },
+  "filters_passed": {
+    "time_window": true,
+    "volatility": true,
+    "spread": true,
+    "volume": true,
+    "risk_limit": true
+  },
+  "expected_entry": 150.50,
+  "expected_stop": 150.05,
+  "expected_target": 151.25,
+  "risk_reward": 1.67
+}
+```
+
+### **7. watchlist Collection**
+```javascript
+{
+  "_id": ObjectId(),
+  "symbol": "TATASTEEL",
+  "exchange": "NSE",
+  "status": "ACTIVE",
+  "added_date": ISODate("2024-01-01"),
+  "last_updated": ISODate("2024-01-15"),
+  "selection_criteria": {
+    "avg_volume": 15000000,
+    "avg_range_pct": 2.5,
+    "avg_spread_pct": 0.05,
+    "liquidity_score": 85
+  },
+  "trading_params": {
+    "enabled_strategies": ["VWAP_REVERSION", "ORB"],
+    "position_size_override": null,
+    "max_trades_per_day": 3,
+    "blackout_periods": ["09:15-09:30", "15:00-15:30"],
+    "min_gap_between_trades": 30
+  },
+  "performance": {
+    "total_trades": 45,
+    "win_rate": 0.58,
+    "avg_pnl_pct": 0.24,
+    "profit_factor": 1.85,
+    "best_strategy": "VWAP_REVERSION",
+    "worst_day": -1.2,
+    "best_day": 2.8
+  },
+  "filters": {
+    "min_price": 50,
+    "max_price": 5000,
+    "min_range": 1.5,
+    "min_volume": 10000000,
+    "max_spread": 0.1,
+    "exclude_events": ["EARNINGS", "DIVIDEND", "SPLIT"],
+    "sector_filter": null
+  }
+}
+```
+
+### **8. risk_metrics Collection**
+```javascript
+{
+  "_id": ObjectId(),
+  "timestamp": ISODate("2024-01-15T10:30:00"),
+  "date": ISODate("2024-01-15T00:00:00"),
+  "account_metrics": {
+    "capital": 500000,
+    "cash_available": 350000,
+    "total_exposure": 150000,
+    "exposure_percent": 30,
+    "margin_used": 150000,
+    "margin_available": 350000
+  },
+  "position_metrics": {
+    "open_positions": 2,
+    "total_position_value": 150000,
+    "unrealized_pnl": 1250,
+    "largest_position": 75000,
+    "concentration_risk": 0.15
+  },
+  "daily_metrics": {
+    "daily_pnl": 1250,
+    "daily_pnl_percent": 0.25,
+    "daily_trades": 5,
+    "winning_trades": 3,
+    "losing_trades": 2,
+    "win_rate": 0.6,
+    "current_drawdown": 0.5,
+    "max_drawdown": 1.2,
+    "consecutive_losses": 0,
+    "consecutive_wins": 2
+  },
+  "risk_scores": {
+    "overall_risk": 35,
+    "position_risk": 40,
+    "market_risk": 30,
+    "execution_risk": 25,
+    "var_95": 5000,
+    "expected_shortfall": 7500
+  },
+  "limits": {
+    "daily_loss_limit": 5000,
+    "daily_loss_used": 500,
+    "position_limit": 3,
+    "positions_used": 2,
+    "exposure_limit": 300000,
+    "exposure_used": 150000
+  }
+}
+```
+
+### **9. system_state Collection**
+```javascript
+{
+  "_id": ObjectId(),
+  "timestamp": ISODate("2024-01-15T10:30:00"),
+  "trading_enabled": true,
+  "system_mode": "LIVE", // LIVE, PAPER, BACKTEST
+  "active_strategies": ["VWAP_REVERSION", "ORB"],
+  "paused_symbols": ["WIPRO"],
+  "risk_state": "NORMAL", // NORMAL, CAUTIOUS, DEFENSIVE, STOPPED
+  "connection_status": {
+    "market_data": "CONNECTED",
+    "order_api": "CONNECTED",
+    "database": "CONNECTED",
+    "slack": "CONNECTED"
+  },
+  "component_health": {
+    "data_handler": "HEALTHY",
+    "strategy_engine": "HEALTHY",
+    "risk_manager": "HEALTHY",
+    "order_executor": "HEALTHY",
+    "slack_connector": "HEALTHY"
+  },
+  "session_stats": {
+    "session_start": ISODate("2024-01-15T09:00:00"),
+    "uptime_minutes": 90,
+    "signals_generated": 25,
+    "orders_placed": 12,
+    "orders_rejected": 1,
+    "errors_count": 2,
+    "warnings_count": 5
+  },
+  "last_activities": {
+    "last_signal": ISODate("2024-01-15T10:28:00"),
+    "last_trade": ISODate("2024-01-15T10:25:00"),
+    "last_error": ISODate("2024-01-15T09:45:00"),
+    "last_health_check": ISODate("2024-01-15T10:30:00")
+  }
+}
+```
+
+### **10. performance_attribution Collection**
+```javascript
+{
+  "_id": ObjectId(),
+  "date": ISODate("2024-01-15T00:00:00"),
+  "total_pnl": 2500,
+  "by_strategy": {
+    "VWAP_REVERSION": {
+      "pnl": 1800,
+      "trades": 3,
+      "win_rate": 0.67,
+      "contribution_pct": 72
+    },
+    "ORB": {
+      "pnl": 700,
+      "trades": 2,
+      "win_rate": 0.5,
+      "contribution_pct": 28
+    }
+  },
+  "by_symbol": {
+    "TATASTEEL": {"pnl": 800, "trades": 2},
+    "INFY": {"pnl": 1200, "trades": 2},
+    "RELIANCE": {"pnl": 500, "trades": 1}
+  },
+  "by_time_slot": {
+    "09:30-10:00": {"pnl": 1200, "trades": 2},
+    "10:00-11:00": {"pnl": 500, "trades": 1},
+    "11:00-12:00": {"pnl": -200, "trades": 1},
+    "14:00-15:00": {"pnl": 1000, "trades": 1}
+  },
+  "by_market_regime": {
+    "TRENDING": {"pnl": 1800, "trades": 3},
+    "RANGING": {"pnl": 700, "trades": 2}
+  },
+  "cost_breakdown": {
+    "gross_pnl": 2800,
+    "commissions": 200,
+    "slippage": 80,
+    "other_costs": 20,
+    "net_pnl": 2500
+  }
+}
+```
+
+### **11. alerts Collection**
+```javascript
+{
+  "_id": ObjectId(),
+  "alert_id": "ALRT_20240115_001",
+  "timestamp": ISODate("2024-01-15T10:30:00"),
+  "alert_type": "SIGNAL",
+  "severity": "HIGH",
+  "component": "VWAP_STRATEGY",
+  "symbol": "TATASTEEL",
+  "title": "Strong VWAP Reversion Signal",
+  "message": "TATASTEEL showing strong reversion opportunity",
+  "details": {
+    "vwap_distance": -1.2,
+    "rsi": 25,
+    "volume_spike": 2.5,
+    "expected_profit": 0.8
+  },
+  "channels": ["slack", "log"],
+  "slack_message_id": "1234567890.123456",
+  "acknowledged": true,
+  "acknowledged_by": "system",
+  "acknowledged_at": ISODate("2024-01-15T10:30:15"),
+  "action_taken": "ORDER_PLACED"
+}
+```
+
+### **12. system_logs Collection**
+```javascript
+{
+  "_id": ObjectId(),
+  "timestamp": ISODate("2024-01-15T10:30:00"),
+  "level": "INFO",
+  "component": "OrderExecutor",
+  "event": "ORDER_PLACED",
+  "message": "Placed buy order for TATASTEEL",
+  "details": {
+    "order_id": "240115000123456",
+    "symbol": "TATASTEEL",
+    "quantity": 500,
+    "price": 150.50
+  },
+  "correlation_id": "req_123456",
+  "session_id": "session_20240115",
+  "user": "system"
+}
+```
+
+## **Database Indexes**
+
+```javascript
+// trades
+db.trades.createIndex({ "symbol": 1, "entry_time": -1 })
+db.trades.createIndex({ "strategy": 1, "entry_time": -1 })
+db.trades.createIndex({ "trade_id": 1 }, { unique: true })
+
+// orders
+db.orders.createIndex({ "symbol": 1, "placed_at": -1 })
+db.orders.createIndex({ "status": 1, "placed_at": -1 })
+db.orders.createIndex({ "order_id": 1 }, { unique: true })
+
+// positions
+db.positions.createIndex({ "status": 1, "symbol": 1 })
+db.positions.createIndex({ "position_id": 1 }, { unique: true })
+
+// market_data
+db.market_data.createIndex({ "symbol": 1, "timestamp": -1, "timeframe": 1 })
+db.market_data.createIndex({ "timestamp": -1 }, { expireAfterSeconds: 2592000 }) // 30 days
+
+// market_microstructure
+db.market_microstructure.createIndex({ "symbol": 1, "timestamp": -1 })
+db.market_microstructure.createIndex({ "timestamp": -1 }, { expireAfterSeconds: 86400 }) // 1 day
+
+// trading_signals
+db.trading_signals.createIndex({ "symbol": 1, "timestamp": -1 })
+db.trading_signals.createIndex({ "executed": 1, "timestamp": -1 })
+db.trading_signals.createIndex({ "signal_id": 1 }, { unique: true })
+
+// risk_metrics
+db.risk_metrics.createIndex({ "date": -1 })
+db.risk_metrics.createIndex({ "timestamp": -1 })
+
+// alerts
+db.alerts.createIndex({ "timestamp": -1, "severity": 1 })
+db.alerts.createIndex({ "alert_id": 1 }, { unique: true })
+
+// Compound indexes for performance
+db.trades.createIndex({ "symbol": 1, "strategy": 1, "entry_time": -1 })
+db.trading_signals.createIndex({ "strategy": 1, "executed": 1, "timestamp": -1 })
+```
+
+## **Configuration Structure**
+
+### **config/settings.py**
+```python
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# System Configuration
+SYSTEM_VERSION = "2.0"
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")  # development, staging, production
+
+# MongoDB Configuration
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
+DB_NAME = os.getenv("DB_NAME", "mft_trading")
+
+# Zerodha Configuration
+KITE_API_KEY = os.getenv("KITE_API_KEY")
+KITE_API_SECRET = os.getenv("KITE_API_SECRET")
+KITE_ACCESS_TOKEN = os.getenv("KITE_ACCESS_TOKEN")
+
+# Trading Configuration
+CAPITAL = 500000  # 5 lakhs
+MAX_POSITIONS = 3
+POSITION_SIZE_PCT = 0.3  # 30% per position
+
+# Risk Parameters
+MAX_LOSS_PER_TRADE = 0.3  # 0.3%
+DAILY_LOSS_LIMIT = 1.0  # 1%
+TARGET_PROFIT = 0.5  # 0.5% per trade
+TRAILING_STOP_PERCENT = 0.2  # 0.2% trailing
+
+# Time Configuration
+TRADE_START_TIME = "09:30"
+TRADE_END_TIME = "15:00"
+SQUARE_OFF_TIME = "15:15"
+NO_NEW_POSITIONS_AFTER = "14:45"
+
+# Technical Parameters
+CANDLE_INTERVAL = "minute"
+LOOKBACK_PERIOD = 100
+```
+
+### **config/slack_config.py**
+```python
+import os
+
+# Slack Configuration
+SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
+SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
+
+# Channel Configuration
+SLACK_CHANNELS = {
+    "signals": os.getenv("SLACK_CHANNEL_SIGNALS", "mft-signals"),
+    "positions": os.getenv("SLACK_CHANNEL_POSITIONS", "mft-positions"),
+    "alerts": os.getenv("SLACK_CHANNEL_ALERTS", "mft-alerts"),
+    "reports": os.getenv("SLACK_CHANNEL_REPORTS", "mft-reports"),
+    "system": os.getenv("SLACK_CHANNEL_SYSTEM", "mft-system"),
+    "commands": os.getenv("SLACK_CHANNEL_COMMANDS", "mft-commands")
+}
+
+# Notification Settings
+NOTIFICATION_SETTINGS = {
+    "entry_signals": True,
+    "exit_signals": True,
+    "risk_alerts": True,
+    "system_alerts": True,
+    "performance_updates": True,
+    "update_interval": 1800  # 30 minutes
+}
+```
+
+### **config/constants.py**
+```python
+# Strategy Names Mapping
+STRATEGY_NAMES = {
+    "VWAP_REVERSION": "vwap_reversion",
+    "ORB": "opening_range",
+    "MOMENTUM": "momentum_breakout",
+    "RSI_DIVERGENCE": "rsi_divergence"
+}
+
+# Order Status
+ORDER_STATUS = {
+    "PENDING": "PENDING",
+    "OPEN": "OPEN",
+    "PARTIALLY_FILLED": "PARTIALLY_FILLED",
+    "COMPLETE": "COMPLETE",
+    "CANCELLED": "CANCELLED",
+    "REJECTED": "REJECTED"
+}
+
+# Position Status
+POSITION_STATUS = {
+    "OPEN": "OPEN",
+    "CLOSING": "CLOSING",
+    "CLOSED": "CLOSED"
+}
+
+# Signal Types
+SIGNAL_TYPES = {
+    "ENTRY": "ENTRY",
+    "EXIT": "EXIT",
+    "SCALE_IN": "SCALE_IN",
+    "SCALE_OUT": "SCALE_OUT"
+}
+
+# Exit Reasons
+EXIT_REASONS = {
+    "TARGET_HIT": "TARGET_HIT",
+    "STOP_LOSS": "STOP_LOSS",
+    "TIME_EXIT": "TIME_EXIT",
+    "EOD_SQUARE_OFF": "EOD_SQUARE_OFF",
+    "MANUAL_EXIT": "MANUAL_EXIT",
+    "RISK_LIMIT": "RISK_LIMIT",
+    "SIGNAL_EXIT": "SIGNAL_EXIT"
+}
+
+# Market Regimes
+MARKET_REGIMES = {
+    "TRENDING": "TRENDING",
+    "RANGING": "RANGING",
+    "VOLATILE": "VOLATILE"
+}
+
+# Risk States
+RISK_STATES = {
+    "NORMAL": "NORMAL",
+    "CAUTIOUS": "CAUTIOUS",
+    "DEFENSIVE": "DEFENSIVE",
+    "STOPPED": "STOPPED"
+}
+
+# Alert Types
+ALERT_TYPES = {
+    "SIGNAL": "SIGNAL",
+    "RISK": "RISK",
+    "EXECUTION": "EXECUTION",
+    "SYSTEM": "SYSTEM",
+    "PERFORMANCE": "PERFORMANCE"
+}
+
+# Alert Severities
+ALERT_SEVERITIES = {
+    "LOW": "LOW",
+    "MEDIUM": "MEDIUM",
+    "HIGH": "HIGH",
+    "CRITICAL": "CRITICAL"
+}
+
+# Error Codes
+ERROR_CODES = {
+    "E001": "Connection lost",
+    "E002": "Order rejected",
+    "E003": "Risk limit exceeded",
+    "E004": "Invalid signal",
+    "E005": "Database error",
+    "E006": "Slack communication failed",
+    "E007": "Market data error",
+    "E008": "Strategy error",
+    "E009": "System error",
+    "E010": "Authentication failed"
+}
+```
+
+## **Interface Definitions**
+
+```python
+# interfaces.py
+from abc import ABC, abstractmethod
+from typing import Dict, List, Tuple, Optional
+
+class IStrategy(ABC):
+    @abstractmethod
+    def check_entry_conditions(self, data: List[Dict]) -> Tuple[bool, Optional[Dict]]:
+        """Check if entry conditions are met"""
+        pass
+    
+    @abstractmethod
+    def check_exit_conditions(self, data: List[Dict], position: Dict) -> Tuple[bool, Optional[str]]:
+        """Check if exit conditions are met"""
+        pass
+    
+    ```python
+    def calculate_position_size(self, signal: Dict, risk_params: Dict) -> int:
+        """Calculate position size based on signal and risk parameters"""
+        pass
+
+class IDataHandler(ABC):
+    @abstractmethod
+    def get_latest_candle(self, symbol: str, timeframe: str = "1min") -> Dict:
+        """Get latest candle for symbol"""
+        pass
+    
+    @abstractmethod
+    def get_historical_data(self, symbol: str, timeframe: str, lookback: int) -> List[Dict]:
+        """Get historical candles"""
+        pass
+    
+    @abstractmethod
+    def get_market_depth(self, symbol: str) -> Dict:
+        """Get current market depth"""
+        pass
+
+class IOrderManager(ABC):
+    @abstractmethod
+    def place_order(self, order_params: Dict) -> str:
+        """Place order and return order_id"""
+        pass
+    
+    @abstractmethod
+    def cancel_order(self, order_id: str) -> bool:
+        """Cancel order"""
+        pass
+    
+    @abstractmethod
+    def get_order_status(self, order_id: str) -> Dict:
+        """Get order status"""
+        pass
+
+class ISlackConnector(ABC):
+    @abstractmethod
+    def send_signal(self, signal: Dict, channel: str = "signals") -> bool:
+        """Send trading signal to Slack"""
+        pass
+    
+    @abstractmethod
+    def send_alert(self, alert: Dict, channel: str = "alerts") -> bool:
+        """Send alert to Slack"""
+        pass
+    
+    @abstractmethod
+    def send_message(self, message: str, channel: str) -> bool:
+        """Send generic message to Slack"""
+        pass
+
+class IRiskManager(ABC):
+    @abstractmethod
+    def can_take_trade(self, signal: Dict) -> Tuple[bool, Optional[List[str]]]:
+        """Check if new trade is allowed"""
+        pass
+    
+    @abstractmethod
+    def update_risk_metrics(self, trade: Dict) -> None:
+        """Update risk metrics after trade"""
+        pass
+    
+    @abstractmethod
+    def get_position_size(self, symbol: str, strategy: str) -> int:
+        """Get allowed position size"""
+        pass
+```
+
+## **Slack Message Templates**
+
+### **Entry Signal Template**
+```python
+ENTRY_SIGNAL_TEMPLATE = {
+    "blocks": [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "🟢 NEW POSITION OPENED"
+            }
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": "*Symbol:* {symbol}"},
+                {"type": "mrkdwn", "text": "*Strategy:* {strategy}"},
+                {"type": "mrkdwn", "text": "*Direction:* {direction}"},
+                {"type": "mrkdwn", "text": "*Entry Price:* ₹{entry_price}"},
+                {"type": "mrkdwn", "text": "*Quantity:* {quantity}"},
+                {"type": "mrkdwn", "text": "*Capital:* ₹{capital}"}
+            ]
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": "*Stop Loss:* ₹{stop_loss} ({stop_pct}%)"},
+                {"type": "mrkdwn", "text": "*Target:* ₹{target} ({target_pct}%)"},
+                {"type": "mrkdwn", "text": "*Risk:* ₹{risk_amount}"},
+                {"type": "mrkdwn", "text": "*R:R Ratio:* {risk_reward}"}
+            ]
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": "Signal Strength: {signal_strength}/100 | Time: {timestamp}"
+                }
+            ]
+        }
+    ]
+}
+```
+
+### **Exit Signal Template**
+```python
+EXIT_SIGNAL_TEMPLATE = {
+    "blocks": [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "🔴 POSITION CLOSED"
+            }
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": "*Symbol:* {symbol}"},
+                {"type": "mrkdwn", "text": "*Exit Price:* ₹{exit_price}"},
+                {"type": "mrkdwn", "text": "*P&L:* {pnl_emoji} ₹{pnl} ({pnl_pct}%)"},
+                {"type": "mrkdwn", "text": "*Duration:* {duration} mins"}
+            ]
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": "*Exit Reason:* {exit_reason}"},
+                {"type": "mrkdwn", "text": "*Today's P&L:* ₹{daily_pnl} ({daily_pnl_pct}%)"}
+            ]
+        }
+    ]
+}
+```
+
+### **Performance Update Template**
+```python
+PERFORMANCE_UPDATE_TEMPLATE = {
+    "blocks": [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "📊 PERFORMANCE UPDATE - {time}"
+            }
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "*Today's Performance*"
+            }
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": "*Total P&L:* ₹{total_pnl} ({pnl_pct}%)"},
+                {"type": "mrkdwn", "text": "*Trades:* {total_trades}"},
+                {"type": "mrkdwn", "text": "*Win Rate:* {win_rate}%"},
+                {"type": "mrkdwn", "text": "*Active Positions:* {active_positions}/{max_positions}"}
+            ]
+        },
+        {
+            "type": "divider"
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "*Best/Worst Trades*\n• Best: {best_symbol} +₹{best_pnl}\n• Worst: {worst_symbol} -₹{worst_pnl}"
+            }
+        }
+    ]
+}
+```
+
+## **Import Structure**
+
+```python
+# Standard imports structure for all modules
+
+# From config
+from config.settings import CAPITAL, MAX_POSITIONS, MAX_LOSS_PER_TRADE
+from config.constants import STRATEGY_NAMES, ORDER_STATUS, POSITION_STATUS
+from config.slack_config import SLACK_CHANNELS, NOTIFICATION_SETTINGS
+
+# From database
+from database.mongodb_handler import MongoDBHandler
+from database.models.trade_models import TradeModel
+from database.models.position_models import PositionModel
+
+# From strategies
+from strategies.base_strategy import BaseStrategy
+from strategies.vwap_reversion import VWAPReversionStrategy
+
+# From execution
+from execution.order_manager import OrderManager
+from execution.risk_manager import RiskManager
+
+# From communication
+from communication.slack_connector import SlackConnector
+from communication.alert_manager import AlertManager
+
+# From utils
+from utils.logger import setup_logger
+from utils.time_utils import is_market_open, get_market_time
+from utils.calculations import calculate_pnl, calculate_position_size
+```
+
+## **Threading Model**
+
+```python
+# Main Thread
+- Strategy signal generation
+- Order placement decisions
+- Risk management checks
+
+# Background Thread 1: Market Data
+- Real-time data streaming
+- Candle formation
+- Indicator calculation
+
+# Background Thread 2: Position Monitoring
+- Position P&L updates
+- Stop loss monitoring
+- Time-based exits
+
+# Background Thread 3: Slack Communication
+- Async message sending
+- Command processing
+- Alert dispatching
+
+# Background Thread 4: System Monitoring
+- Health checks
+- Connection monitoring
+- Performance metrics
+```
+
+## **Data Flow Diagram**
+
+```
+Market Data (Zerodha WebSocket)
+    ↓
+Data Processor (Candle Formation + Indicators)
+    ↓
+Strategy Engine (Signal Generation)
+    ↓
+Risk Manager (Position Sizing + Checks)
+    ↓ (Approved)
+Order Manager (Smart Execution)
+    ↓
+Position Tracker (Monitoring)
+    ↓
+Performance Tracker (Analytics)
+    ↓
+Slack Notifier (Communication)
+```
+
+## **Error Handling Strategy**
+
+```python
+# Error handling hierarchy
+try:
+    # Core trading logic
+except ConnectionError as e:
+    # Handle connection issues
+    # Attempt reconnection
+    # Alert via Slack
+except OrderRejectionError as e:
+    # Handle order rejections
+    # Log details
+    # Retry with modifications
+except RiskLimitError as e:
+    # Handle risk violations
+    # Stop new trades
+    # Alert immediately
+except Exception as e:
+    # Catch all other errors
+    # Log to database
+    # Alert critical channel
+    # Continue operation if possible
+```
+
+## **Environment Variables (.env.example)**
+
+```bash
+# System
+ENVIRONMENT=development
+LOG_LEVEL=INFO
+
+# MongoDB
+MONGODB_URI=mongodb://localhost:27017/
+DB_NAME=mft_trading
+
+# Zerodha
+KITE_API_KEY=your_api_key
+KITE_API_SECRET=your_api_secret
+KITE_ACCESS_TOKEN=your_access_token
+
+# Slack
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-token
+
+# Channels (optional, defaults provided)
+SLACK_CHANNEL_SIGNALS=mft-signals
+SLACK_CHANNEL_POSITIONS=mft-positions
+SLACK_CHANNEL_ALERTS=mft-alerts
+SLACK_CHANNEL_REPORTS=mft-reports
+SLACK_CHANNEL_SYSTEM=mft-system
+SLACK_CHANNEL_COMMANDS=mft-commands
+
+# Trading Parameters (optional, defaults in config)
+CAPITAL=500000
+MAX_POSITIONS=3
+DAILY_LOSS_LIMIT=1.0
+```
+
+## **Testing Structure**
+
+```
+tests/
+├── unit/
+│   ├── test_strategies.py
+│   ├── test_risk_manager.py
+│   ├── test_order_manager.py
+│   └── test_calculations.py
+├── integration/
+│   ├── test_data_flow.py
+│   ├── test_order_execution.py
+│   └── test_slack_integration.py
+└── fixtures/
+    ├── sample_market_data.json
+    ├── sample_positions.json
+    └── sample_trades.json
+```
+
+## **Deployment Considerations**
+
+1. **Docker Configuration**
+```yaml
+version: '3.8'
+services:
+  mft-trading:
+    build: .
+    environment:
+      - ENVIRONMENT=production
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    
+  mongodb:
+    image: mongo:latest
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+```
+
+2. **System Requirements**
+- Python 3.8+
+- MongoDB 4.4+
+- 2GB RAM minimum
+- Stable internet connection
+- Ubuntu 20.04 or MacOS (for development)
+
+3. **Monitoring**
+- Use Grafana for real-time dashboards
+- Set up alerts for system health
+- Log aggregation with ELK stack
+
+## **Version History**
+
+- **v2.0** - Current version with complete Slack integration
+- **v1.0** - Initial version with basic trading functionality
+
+This plan provides a complete blueprint for implementing the MFT system across multiple Claude sessions with consistent results.
